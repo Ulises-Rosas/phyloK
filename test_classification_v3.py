@@ -3,19 +3,10 @@ import matplotlib.pyplot as plt
 from numpy.linalg import cholesky
 
 
-tree_file = "../src/data/test_tree_v2.txt"
 
 from phylokrr.treeio import get_vcv
-with open(tree_file, 'r') as f: 
-    tree = f.read().strip()
-
 from phylokrr.treeio import parseNewickTree
 
-nodes, root = parseNewickTree(tree)
-vcv, spps = get_vcv(tree)
-vcv = np.array(vcv)
-
-T_spps_i = np.array([i.index for i in nodes if i.name])
 
 def pre_process_V(V):
     n, _ = V.shape
@@ -33,29 +24,13 @@ def bin_error(n, V):
 def make_circles_v3(seed, tree, test_num = 0.5, sigma=1, mu = 0, radius=0.01):
 
     np.random.seed(seed)
-    # # Step 1: Define correlation structure for observations
-    # num_samples = 500
-    # rho = 0.5  # Strength of correlation between consecutive observations
-    # mu = 0
-    # sigma = 1
-    # radius = 2.5
-    # test_num = 0.20
-
 
     vcv,_ = get_vcv(tree)
     vcv = np.array(vcv)
 
     # kr = 1/np.sqrt(np.diag(vcv))
     # V = (kr[:, None] * vcv) * kr
-
-
     V = pre_process_V(vcv)
-    # V = vcv
-    # L = cholesky(V)
-    
-    # E,Q = np.linalg.eig( V )
-    # L = Q @ np.diag( E**(1/2) )
-
     # # Step 2: Generate independent Gaussian features
     # # noise = 0.1  # Add noise to the observations
     num_features = 2
@@ -152,6 +127,61 @@ def make_circles_v4(seed, tree, test_num = 0.5, sigma=1, mu = 0, radius=0.01):
     return X_train, X_test, y_train, y_test, V_train, V_test, train_idx, test_idx
 
 
+def make_circles_v5(seed, tree, test_num = 0.5, sigma=1, mu = 0, radius=0.01):
+    """
+    Following binaryPGLMM {ape} code for generating correlated data
+    """
+    np.random.seed(seed)
+    # # Step 1: Define correlation structure for observations
+
+    vcv, _ = get_vcv(tree)
+    vcv = np.array(vcv)
+    V = pre_process_V(vcv)
+    V *= sigma
+    # V = vcv.copy()
+    n = V.shape[0]
+    # X = np.random.normal(0, 1, (n,2) )
+    X = np.random.multivariate_normal(np.zeros(n), V, 2).T
+
+    # E, Q = np.linalg.eig(V)
+    # L = Q @ np.diag(E**(1/2))
+    # L = np.linalg.cholesky(V)
+    # correlated err
+    # L.shape
+    # e = L @ np.random.normal(0, 1, n )
+    e = np.random.multivariate_normal(np.zeros(n), V, 1).T.ravel()
+
+
+    b = 0.5
+    # eta = X[:, 0]**2 + X[:, 1]**2 + b  + e
+    eta = X[:, 0]*X[:, 1] + b  + e
+    p = 1/(1 + np.exp(-eta))  
+
+    # random uniform distribution from 0 to 1
+    # y = (np.random.uniform(0, 1, n) < p).astype(float)  # Define labels
+    y = (p >= 0.5).astype(float)  # Define labels
+    
+
+    # Step 5: Shuffle the data and split into training and testing sets
+    all_index = list(range(len(vcv)))
+    np.random.shuffle(all_index)
+    
+    X = X[all_index,:]
+    y = y[all_index]
+    V = V[all_index, :][:, all_index]
+
+    Indx = int(test_num*X.shape[0])
+    test_idx = np.random.choice(all_index, Indx, replace=False)
+    train_idx = list(set(all_index) - set(test_idx))
+
+    X_train, X_test = X[train_idx, :], X[test_idx, :]
+    y_train, y_test = y[train_idx], y[test_idx]
+
+    V_train = V[train_idx,:][:,train_idx]
+    V_test = V[test_idx,:][:,test_idx]
+    
+    return X_train, X_test, y_train, y_test, V_train, V_test, train_idx, test_idx
+
 def plot_dataset(X, y, axes):
     plt.plot(X[:, 0][y==0], X[:, 1][y==0], "bs")
     plt.plot(X[:, 0][y==1], X[:, 1][y==1], "g^")
@@ -173,9 +203,22 @@ import matplotlib.pyplot as plt
 from cross_validation_krgee import (k_fold_cv_random_vcv_v2, 
                                     k_fold_cv_random_vcv_v3)
 
-# seed = 1203
-seed = 12031
-cv_sample = 100
+
+
+
+tree_file = "test_tree_v3.txt"
+with open(tree_file, 'r') as f: 
+    tree = f.read().strip()
+
+nodes, root = parseNewickTree(tree)
+vcv, spps = get_vcv(tree)
+vcv = np.array(vcv)
+
+T_spps_i = np.array([i.index for i in nodes if i.name])
+
+
+seed = 12034
+cv_sample = 50
 cv_folds = 3
 tol = 1e-3
 max_iter = 200
@@ -184,10 +227,10 @@ max_iter = 200
 (X_train, X_test, 
  y_train, y_test, 
  vcv_train, vcv_test,
- train_idx, test_idx) = make_circles_v3(
+ train_idx, test_idx) = make_circles_v5(
                                  seed=seed, 
                                  tree=tree,
-                                 test_num=0.25,
+                                 test_num=0.5,
                                  sigma = 1,
                                  mu = 0,
                                 # radius=1.25
@@ -197,9 +240,6 @@ max_iter = 200
 T_spps_train = T_spps_i[train_idx]
 T_spps_test = T_spps_i[test_idx]
 
-# plot_dataset(X_train, y_train, np.array([-1, 1, -1, 1])*4)
-# plot_dataset(X_test, y_test, np.array([-1, 1, -1, 1])*4)
-# vcv_train = pre_process_V(vcv_train)
 
 print('label_ratio train:', np.sum(y_train ==1)/len(y_train))
 print('label_ratio test:', np.sum(y_test ==1)/len(y_test))
@@ -213,10 +253,18 @@ X_train_scale = X_train.std(axis=0)
 X_train -= X_train_offset
 X_train /= X_train_scale
 
-# X_test -= np.mean(X_test, axis=0)
-# X_test /= np.std(X_test, axis=0)
-X_test -= X_train_offset
-X_test /= X_train_scale
+
+# X_test -= X_train_offset
+# X_test /= X_train_scale
+
+X_test = X_test - np.mean(X_test, axis=0)
+X_test = X_test / np.std(X_test, axis=0)
+
+
+plot_dataset(X_train, y_train, np.array([-1, 1, -1, 1])*3)
+# plot_dataset(X_test, y_test, np.array([-1, 1, -1, 1])*3)
+
+
 
 params = {
     'lambda' : np.logspace(-5, 3, 200, base=2),
@@ -258,7 +306,7 @@ print()
 lkrgee = Logistic(get_corr=False, tol=tol, 
                  max_iter=max_iter, kernel='rbf', 
                  verbose=True, seed=seed, 
-                 fix_phi= True)
+                 fix_phi = False)
 
 import time
 start = time.time()
@@ -284,8 +332,6 @@ print('degrees of freedom: ', lkrgee.dof)
 
 
 
-
-
 from sklearn.linear_model import LogisticRegression
 log_reg = LogisticRegression()
 log_reg.fit(X_train, y_train)
@@ -294,6 +340,7 @@ from sklearn.metrics import log_loss
 log_reg_probs = log_reg.predict_proba(X_test)[:, 1]
 log_reg_loss = log_loss(y_test, log_reg_probs)
 # log_reg_loss = 1 -  log_reg.score(X_test, y_test)
+
 
 
 # lkrr.b
@@ -380,19 +427,27 @@ print('lkrgee_brier: ', lkrgee_brier)
 # plt.hist(lkrgee_probs , bins=nbins, alpha=0.5, label='Logistic KRGEE')
 
 
-# make an histogram of resdiduals
+# # make an histogram of resdiduals
+lor_reg_res = (y_test - log_reg_probs )/np.sqrt(log_reg_probs*(1-log_reg_probs))
+lkrr_r      = (y_test - lkrr_probs    )/np.sqrt(lkrr_probs*(1-lkrr_probs))
+lkrgee_r    = (y_test - lkrgee_probs  )/np.sqrt(lkrgee_probs*(1-lkrgee_probs))
 
-# lor_reg_res = (y_test - log_reg_probs )/np.sqrt(log_reg_probs*(1-log_reg_probs))
-# lkrr_r = (y_test - lkrr_probs )/np.sqrt(lkrr_probs*(1-lkrr_probs))
-# lkrgee_r = (y_test - lkrgee_probs)/np.sqrt(lkrgee_probs*(1-lkrgee_probs))
+fig, axs = plt.subplots(1, 3, figsize=(12, 6))
+# draw true network
+plt.subplot(1, 3, 1)
+plt.hist(lor_reg_res, bins=30, alpha=0.5)
+plt.xlabel("Residuals")
+plt.ylabel("Frequency")
+plt.title("Logistic Regression Residuals")
 
-# np.cov(lkrgee_r,y_test)
-# np.cov(lkrr_r,y_test)
-# np.cov(lor_reg_res,y_test)
+plt.subplot(1, 3, 2)
+plt.hist(lkrr_r, bins=30, alpha=0.5, label='Logistic KRR')
+plt.xlabel("Residuals")
+plt.ylabel("Frequency")
+plt.title("Logistic KRR Residuals")
 
-# plt.hist(lor_reg_res, bins=30, alpha=0.5, label='Logistic Regression')
-# plt.hist(lkrr_r, bins=30, alpha=0.5, label='Logistic KRR')
-# plt.hist(lkrgee_r, bins=100, alpha=0.5, label='Logistic KRGEE')
-# plt.xlabel("Residuals")
-# plt.ylabel("Frequency")
-# plt.title("Residuals Histogram")
+plt.subplot(1, 3, 3)
+plt.hist(lkrgee_r, bins=30, alpha=0.5, label='Logistic KRGEE')
+plt.xlabel("Residuals")
+plt.ylabel("Frequency")
+plt.title("Logistic KRGEE Residuals")
