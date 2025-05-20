@@ -3,12 +3,6 @@ import time
 from collections import deque
 
 import numpy as np
-from sklearn.metrics import roc_curve, auc
-
-def auc_score(model, X_test, y_test):
-    test_probs = model.predict(X_test)
-    fpr, tpr, _ = roc_curve(y_test, test_probs)
-    return 1 -  auc(fpr, tpr)
 
 
 def get_DFP(tree, T_spps_i, vcv):
@@ -265,7 +259,6 @@ def k_fold_cv_random_vcv_v2(X, y, vcv,
                    model, param_init, i)
         
         init_err = model.score(X_test, y_test)
-        # init_err = auc_score(model, X_test, y_test)
 
         all_errors.append([init_idx, init_err])
 
@@ -407,7 +400,6 @@ def k_fold_cv_random_vcv_v3(X, y, vcv,
                    model, param_init, i)
         
         init_err = model.score(X_test, y_test)
-        # init_err = auc_score(model, X_test, y_test)
         all_errors.append([init_idx, init_err])
 
         for j, p_j in enumerate(P_r):
@@ -420,7 +412,6 @@ def k_fold_cv_random_vcv_v3(X, y, vcv,
             model.set_params(**tmp_param)
             model.fit(X_train, y_train, vcv_train)
             tmp_err = model.score(X_test, y_test)
-            # tmp_err = auc_score(model, X_test, y_test)
             all_errors.append([j, tmp_err])
 
     # O(sample*folds)
