@@ -46,11 +46,6 @@ def center_kernel(K):
     right = np.eye(p, dtype=np.float64) - (1/n)*np.ones((p,p), dtype=np.float64)
     return left @ K @ right
 
-    # left  = n*np.eye(n) - np.ones((n,n))
-    # right = n*np.eye(p) - np.ones((p,p))
-    # return (1/n**2)*left @ K @ right
-
-
 class KRGEE:
     """
     Kernel Ridge Generalized Estimating Equations for 1 cluster.
@@ -210,7 +205,10 @@ class KRGEE:
 
         it improves the numerical stability of the algorithm
 
-        ref: https://daijiang.github.io/phyr/reference/pglmm_compare.html
+        refs: 
+
+        https://daijiang.github.io/phyr/reference/pglmm_compare.html
+        https://ives.labs.wisc.edu/pdf/correlateddata.pdf (pp. 94)
 
         """
         V = np.asfortranarray(V, dtype=V.dtype)
@@ -361,7 +359,7 @@ class KRGEE:
     
     def set_df(self, K, Lpp, n):
         """
-        degrees of freedom
+        residual degrees of freedom
 
         ref: Elements of Statistical Learning, Hastie, Tibshirani, Friedman
         pp. 233
@@ -383,13 +381,10 @@ class KRGEE:
         theta = np.linalg.eigvalsh(H)
         theta = np.real(theta)
         df_model = np.sum(theta / (theta + self.lam))
-        # S = np.linalg.solve(Lpp, H)
-        # df_model = np.trace(2*S  - S @ S.T)
-        
+        # phylogenetic degrees of freedom - model degrees of freedom
         self.dof = np.clip( self.dofp -  df_model, self.epsilon, self.dofp)
-        # self.dof = 1
-        # self.dof  = df_model
-    
+
+
     def set_rdf(self, y, y_hat):
         """
         residual degrees of freedom
