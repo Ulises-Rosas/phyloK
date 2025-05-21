@@ -4,7 +4,7 @@ from numpy.linalg import cholesky
 
 
 
-from phylokrr.treeio import get_vcv
+from phylokrr.treeio import get_vcv,is_leaf
 from phylokrr.treeio import parseNewickTree
 
 
@@ -138,7 +138,6 @@ def make_circles_v5(seed, tree, test_num = 0.5, sigma=1, mu = 0, radius=0.01):
     vcv = np.array(vcv)
     V = pre_process_V(vcv)
     V *= sigma
-    # V = vcv.copy()
     n = V.shape[0]
     # X = np.random.normal(0, 1, (n,2) )
     X = np.random.multivariate_normal(np.zeros(n), V, 2).T
@@ -204,21 +203,21 @@ from cross_validation_krgee import (k_fold_cv_random_vcv_v2,
                                     k_fold_cv_random_vcv_v3)
 
 
-
-
 tree_file = "test_tree_v3.txt"
 with open(tree_file, 'r') as f: 
     tree = f.read().strip()
 
 nodes, root = parseNewickTree(tree)
+leaf_indx = {n.name: n  for n in nodes if is_leaf(n) }
+
+
 vcv, spps = get_vcv(tree)
 vcv = np.array(vcv)
-
-T_spps_i = np.array([i.index for i in nodes if i.name])
+spps = np.array(spps)
 
 
 seed = 12034
-cv_sample = 50
+cv_sample = 100
 cv_folds = 3
 tol = 1e-3
 max_iter = 200
@@ -233,12 +232,11 @@ max_iter = 200
                                  test_num=0.5,
                                  sigma = 1,
                                  mu = 0,
-                                # radius=1.25
-                                radius=1.
-                                 )
+                                 radius=1.)
 
-T_spps_train = T_spps_i[train_idx]
-T_spps_test = T_spps_i[test_idx]
+spps_train = np.array([leaf_indx[l] for l in spps[train_idx]])
+spps_test  = np.array([leaf_indx[l] for l in spps[test_idx]])
+
 
 
 print('label_ratio train:', np.sum(y_train ==1)/len(y_train))
@@ -261,14 +259,14 @@ X_test = X_test - np.mean(X_test, axis=0)
 X_test = X_test / np.std(X_test, axis=0)
 
 
-plot_dataset(X_train, y_train, np.array([-1, 1, -1, 1])*3)
+# plot_dataset(X_train, y_train, np.array([-1, 1, -1, 1])*3)
 # plot_dataset(X_test, y_test, np.array([-1, 1, -1, 1])*3)
 
 
 
 params = {
-    'lambda' : np.logspace(-5, 3, 200, base=2),
-    'gamma'  : np.logspace(-5, 3, 200, base=2),
+    'lambda' : np.logspace(-5, 5, 200, base=2),
+    'gamma'  : np.logspace(-5, 5, 200, base=2),
 }
 # quit()
 
@@ -312,7 +310,7 @@ import time
 start = time.time()
 lkrgee_best_params = k_fold_cv_random_vcv_v3(
     X_train, y_train, vcv_train, 
-    (nodes, root), T_spps_train,
+    spps_train,
     lkrgee, params,
     folds=cv_folds,
     sample=cv_sample, 
@@ -347,23 +345,23 @@ log_reg_loss = log_loss(y_test, log_reg_probs)
 # lkrgee.b
 # log_reg.intercept_
 
-# tmp_axes =  [-4, 4, -4, 4]
-# fig, axes = plt.subplots(1, 3, figsize=(15, 5))
-# plt.sca(axes[0])
-# plt.title(f'Logistic Regression (log loss: {round(log_reg_loss, 3)})')
-# plot_predictions(log_reg, tmp_axes)
-# plot_dataset(X_test, y_test, tmp_axes)
+tmp_axes =  [-4, 4, -4, 4]
+fig, axes = plt.subplots(1, 3, figsize=(15, 5))
+plt.sca(axes[0])
+plt.title(f'Logistic Regression (log loss: {round(log_reg_loss, 3)})')
+plot_predictions(log_reg, tmp_axes)
+plot_dataset(X_test, y_test, tmp_axes)
 
-# plt.sca(axes[1])
-# plt.title(f'Logistic KRR (log loss: {round(lkrr_loss, 3)})')
-# plot_predictions(lkrr, tmp_axes)
-# plot_dataset(X_test, y_test, tmp_axes)
+plt.sca(axes[1])
+plt.title(f'Logistic KRR (log loss: {round(lkrr_loss, 3)})')
+plot_predictions(lkrr, tmp_axes)
+plot_dataset(X_test, y_test, tmp_axes)
 
-# plt.sca(axes[2])
-# plt.title(f'Logistic KRGEE (log loss: {round(lkrgee_loss, 3)})')
-# plot_predictions(lkrgee, tmp_axes)
-# plot_dataset(X_test, y_test, tmp_axes)
-# plt.tight_layout()
+plt.sca(axes[2])
+plt.title(f'Logistic KRGEE (log loss: {round(lkrgee_loss, 3)})')
+plot_predictions(lkrgee, tmp_axes)
+plot_dataset(X_test, y_test, tmp_axes)
+plt.tight_layout()
 
 
 

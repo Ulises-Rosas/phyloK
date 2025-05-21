@@ -5,7 +5,7 @@ from collections import deque
 import numpy as np
 
 
-def get_DFP(tree, T_spps_i, vcv):
+def get_DFP(spps_train, vcv):
     """
     Get degrees of freedom sensu Paradis
     Params
@@ -14,12 +14,18 @@ def get_DFP(tree, T_spps_i, vcv):
     T_spps_i: list of species index in nodes
     vcv: vcv of the species
     """
-    nodes, root = tree
+
+    n1 = spps_train[0]
+    # O(n), find the root
+    while n1.ancestor:
+        n1 = n1.ancestor
+    root = n1
+
     vn = set()
     bls = 0
-    for i in T_spps_i:
-        bls += nodes[i].branch_length
-        tmp_anc = nodes[i].ancestor
+    for n in spps_train:
+        bls += n.branch_length
+        tmp_anc = n.ancestor
         while (tmp_anc not in vn) and (tmp_anc != root):
             vn.add(tmp_anc)
             tmp_anc = tmp_anc.ancestor
@@ -343,7 +349,7 @@ def k_fold_cv_random_vcv(X, y, vcv,
     return best_[0]
 
 def k_fold_cv_random_vcv_v3(X, y, vcv,
-                     tree, T_spps_train,
+                     T_spps_train,
                      model, 
                      params,
                      folds = 3, 
@@ -387,7 +393,7 @@ def k_fold_cv_random_vcv_v3(X, y, vcv,
         y_train, y_test = y[train_idx], y[test_idx]
 
         vcv_train = vcv[train_idx,:][:,train_idx]
-        dof = get_DFP(tree, T_spps_train[train_idx], vcv_train)
+        dof = get_DFP(T_spps_train[train_idx], vcv_train)
         model.dofp = dof
         # print('degrees of freedom from phylo: ', dof)
     

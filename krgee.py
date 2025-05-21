@@ -1,7 +1,7 @@
 import sys
 import time
 from collections import deque
-from scipy.sparse.linalg import eigsh
+
 
 import numpy as np
 from phylokrr.kernels import linear_kernel, RBF_kernel
