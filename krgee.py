@@ -46,6 +46,36 @@ def center_kernel(K):
     right = np.eye(p, dtype=np.float64) - (1/n)*np.ones((p,p), dtype=np.float64)
     return left @ K @ right
 
+def get_DFP(spps_train, vcv):
+    """
+    Get degrees of freedom sensu Paradis
+    Params
+    ------
+    tree: nodes, root
+    T_spps_i: list of species index in nodes
+    vcv: vcv of the species
+    """
+
+    n1 = spps_train[0]
+    # O(n), find the root
+    while n1.ancestor:
+        n1 = n1.ancestor
+    root = n1
+
+    vn = set()
+    bls = 0
+    for n in spps_train:
+        bls += n.branch_length
+        tmp_anc = n.ancestor
+        while (tmp_anc not in vn) and (tmp_anc != root):
+            vn.add(tmp_anc)
+            tmp_anc = tmp_anc.ancestor
+
+    for i in vn:
+        bls += i.branch_length
+
+    return (bls * vcv.shape[0])/np.sum(np.diag(vcv))
+
 class KRGEE:
     """
     Kernel Ridge Generalized Estimating Equations for 1 cluster.
@@ -62,6 +92,7 @@ class KRGEE:
                  get_corr = True,
                  copy_R_inv = False,
                  copy_K_train = False,
+                 copy_dofp = False, # phylogenetic degrees of freedom
                  fix_phi = False
                  ) -> None:
         
@@ -99,12 +130,15 @@ class KRGEE:
         self.copy_K = copy_K_train
         self.K_train = np.array([])
 
+        self.copy_dofp = copy_dofp
+        self.dofp = 1
+
         self.phi = 1
         self.fix_phi = fix_phi
         self.r = np.array([])
         self.rho = np.array([])
         self.dof = 1 # degrees of freedom
-        self.dofp = 1
+
 
         self._verbose = False
         self._update_rho = False
@@ -234,9 +268,9 @@ class KRGEE:
         Inverse of the correlation matrix
         """
         L = np.linalg.cholesky(R)
-        # L_inv = np.linalg.inv(L)
-        # return L_inv.T @ L_inv
-        return np.linalg.solve(L.T, np.linalg.solve(L, np.eye(R.shape[0], dtype=R.dtype)))
+        L_inv = np.linalg.inv(L)
+        return L_inv.T @ L_inv
+        # return np.linalg.solve(L.T, np.linalg.solve(L, np.eye(R.shape[0], dtype=R.dtype)))
         # return np.linalg.pinv(R)
     
     def get_R_inv(self, vcv):
@@ -281,8 +315,12 @@ class KRGEE:
             pass
 
         else:
-            self.R_inv = self.get_R_inv(vcv)
+            if isinstance(vcv, np.ndarray):
+                self.R_inv = self.get_R_inv(vcv)
 
+            else:
+                n,_ = self.X.shape
+                self.R_inv = np.eye(n)
 
     def set_K_train(self, X):
         """
@@ -315,6 +353,17 @@ class KRGEE:
 
         else:
             self.K_train = np.asfortranarray( self.get_K(X, X), dtype=X.dtype)
+
+    def set_dofp(self, spps, vcv):
+        """
+        Set the phylogenetic degrees of freedom
+        """
+        if self.copy_dofp:
+            pass
+
+        else:
+            if isinstance(spps, np.ndarray) and isinstance(vcv, np.ndarray):
+                self.dofp = get_DFP(spps, vcv)
 
     def get_Du(self, f_curr):
         """
@@ -404,7 +453,7 @@ class KRGEE:
         if self.fix_phi:
             return 
 
-        self.r = ( y - u ) * vu_sqrt_inv# O(n)
+        self.r = ( y - u ) * vu_sqrt_inv# O(n), pearson residuals
         self.phi = np.dot(self.r, self.r)/self.dof # O(n)
     
     def set_rho(self):
@@ -434,7 +483,6 @@ class KRGEE:
             self.phi = 1
             self.r = np.ones(n, dtype=K.dtype)
             self.rho = np.eye(n, dtype=K.dtype)
-            # self.dof = 1
 
         assert len(self.alpha) > 0, "The model needs to be fitted first"
         
@@ -482,29 +530,30 @@ class KRGEE:
                 print("Iteration: ", i)
                 print('phi: ', self.phi)
                 print('b: ', self.b)
+                print('fix_phi: ', self.fix_phi)
+                print()
 
             f_curr = f_new
         
             if not self.fix_phi:
                 self.set_df(K, Lpp, n)
-                # self.set_rdf(y, u)
-                # self.dof = 1
                 self.set_phi(u, vu_sqrt_inv, y)
-                # self.phi = 1
-                # self.set_rho()
-                # self.R_inv = self._invR(self.rho)
-                # self.phi  = 1
         
         if self.verbose and not conv:
             print("No convergence after %i iterations" % self.max_iter)
 
-    def fit(self, X, y, vcv):
+    def fit(self, X, y, vcv = None, spps = None):
         """
         Fit the model
         """
         self.X = X # store the training data for prediction
-        self.set_R_inv(vcv)
+        self.set_R_inv(vcv) # it returns identity matrix if vcv is None
         self.set_K_train(self.X)
+
+        # it is left as 1 if vcv is None
+        # this is only used for the degrees of freedom
+        # and this itself is only used when fix_phi is False
+        self.set_dofp(spps, vcv)
 
         self.krgee_fit(self.K_train, y)
 
@@ -600,11 +649,12 @@ class Logistic(KRGEE):
                  get_corr = True,
                  copy_R_inv = False,
                  copy_K_train = False,
+                 copy_dofp = False, # phylogenetic degrees of freedom
                  fix_phi = False
                  ) -> None:
         
         super().__init__(kernel, max_iter, lam, warm_start, tol, seed, 
-                         verbose, get_corr, copy_R_inv, copy_K_train, fix_phi)
+                         verbose, get_corr, copy_R_inv, copy_K_train, copy_dofp, fix_phi)
         
         self.Du_mu_func = self.get_Du_mu_internal
         self.Vu_func = self.get_Vu_func
