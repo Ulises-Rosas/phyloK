@@ -164,6 +164,42 @@ def sort_P_r(P_r, P_index):
 
     return P_r
 
+
+def random_folds(n, k, fold_size, sort_folds = True, rng = None):
+    """
+    sequencial random division of the data into k folds.
+
+    It randomly divides the data into k folds, where each fold
+    contains an sorted list of indices.
+
+    O(k n log n) algorithm
+    """
+    all_index = np.array(list(range(n)))
+    rng.shuffle(all_index)
+    # even though we could also use random choice
+    # it does not guarantee the indeces are going to
+    # be sorted.
+
+    # random division of the data
+    myfolds = deque([])
+    # O(folds*n log n) if sort_folds is True
+    # O(folds*n) if sort_folds is False
+    for i in range(k):
+        test_idx = list(range(i * fold_size, (i + 1) * fold_size))
+        train_idx = list(set(range(n)) - set(test_idx))
+        # get the indeces, which are unordered due to shuffling
+        test_idx  = all_index[test_idx] 
+        train_idx = all_index[train_idx]
+
+        if sort_folds:
+            # and then sort them
+            # O(n log n)
+            test_idx  = np.sort(all_index[test_idx] )
+            train_idx = np.sort(all_index[train_idx])
+
+        myfolds.append([train_idx, test_idx])
+    return myfolds
+
 def k_fold_cv_random(X, y, vcv, spps, model, 
                    params,
                    folds = 3, 
@@ -173,13 +209,19 @@ def k_fold_cv_random(X, y, vcv, spps, model,
     """
     Random search for hyperparameter tuning using k-fold cross-validation
     and covariance matrix
+
+    leave one-out exist in the realm of phylogenetic
+    regressions.
+
+    set taxa randomly. Pick clades too.
     """
     
     model.verbose = False
     np.random.seed(seed=seed)
+    rng = np.random.RandomState(seed=seed)
     
-    # shuffle data
-    X, y, vcv = shuffle_data(X, y, vcv, seed)
+    # X = X_train
+    # X_train, y, vcv = shuffle_data(X, y, vcv, seed)
     P_r, P_index, P_n = sample_hyperParams(params, seed, sample, verbose)
     
     # if lambda is present, then sort by lambda
@@ -195,12 +237,15 @@ def k_fold_cv_random(X, y, vcv, spps, model,
     # linked list to store all the errors
     all_errors = deque([])
     
+    # O(n log n), generates sorted indices for
+    # each fold
+    myfolds = random_folds(n, folds, fold_size, 
+                           sort_folds = True, rng = rng)
+    
     # O(n^3*folds*sample)
-    for i in range(folds):
+    for i, (train_idx, test_idx) in enumerate(myfolds):
         print("Fold: ", i)
-
-        test_idx = list(range(i * fold_size, (i + 1) * fold_size))
-        train_idx = list(set(range(n)) - set(test_idx))
+        # print(test_idx)
 
         X_train, X_test = X[train_idx, :], X[test_idx, :]
         y_train, y_test = y[train_idx], y[test_idx]
