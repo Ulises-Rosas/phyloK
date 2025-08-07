@@ -207,8 +207,8 @@ vcv = np.array(vcv)
 spps = np.array(spps)
 
 
-seed = 12038
-cv_sample = 200
+seed = 1960
+cv_sample = 100
 cv_folds = 3
 tol = 1e-3
 max_iter = 200
@@ -221,7 +221,7 @@ max_iter = 200
                                  seed=seed, 
                                  tree=tree,
                                  test_num=0.5,
-                                 sigma = 1,
+                                 sigma = 2,
                                  mu = 0,
                                  radius=0.1)
 
@@ -243,21 +243,21 @@ X_train -= X_train_offset
 X_train /= X_train_scale
 
 
-X_test -= X_train_offset
-X_test /= X_train_scale
+# X_test -= X_train_offset
+# X_test /= X_train_scale
 
-# X_test = X_test - np.mean(X_test, axis=0)
-# X_test = X_test / np.std(X_test, axis=0)
+X_test = X_test - np.mean(X_test, axis=0)
+X_test = X_test / np.std(X_test, axis=0)
 
 
-plot_dataset(X_train, y_train, np.array([-1, 1, -1, 1])*3)
+# plot_dataset(X_train, y_train, np.array([-1, 1, -1, 1])*3)
 # plot_dataset(X_test, y_test, np.array([-1, 1, -1, 1])*3)
 
 
 # ref: Kernel methods in computational biology, pp. 62
 params = {
-    'lambda' : np.logspace(-5, 15, 200, base=2),
-    'gamma'  : np.logspace(-15, 3, 200, base=2),
+    'lambda' : np.logspace(-5, 15, 100, base=2),
+    'gamma'  : np.logspace(-15, 3, 100, base=2),
 }
 # quit()
 
@@ -295,7 +295,7 @@ print()
 lkrgee = Logistic(get_corr=False, tol=tol, 
                  max_iter=max_iter, kernel='rbf', 
                  verbose=True, seed=seed, 
-                 fix_phi = not False)
+                 fix_phi = False)
 
 import time
 start = time.time()
@@ -367,8 +367,6 @@ lkrgee_fpr, lkrgee_tpr, _ = roc_curve(y_test, lkrgee_probs, pos_label=1)
 log_reg_auc = auc(log_reg_fpr, log_reg_tpr)
 lkrr_auc = auc(lkrr_fpr, lkrr_tpr)
 lkrgee_auc = auc(lkrgee_fpr, lkrgee_tpr)
-
-
 
 
 print()
