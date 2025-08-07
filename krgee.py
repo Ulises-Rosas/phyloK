@@ -1,6 +1,5 @@
 import sys
 import time
-from collections import deque
 
 
 import numpy as np
@@ -584,19 +583,7 @@ class KRGEE:
 
         if metric == 'rmse':
             return np.sqrt(np.mean((y_pred - y_test) ** 2))
-        
-        elif metric == 'loss':
-            y_pred = (y_pred >= 0.5).astype(float)
-            return np.mean(y_pred != y_test)
-        
-        elif metric == 'log_loss':
-            # y_pred = np.clip(y_pred, self.hessian_tol, 1 - self.hessian_tol)
-            # print(y_pred)
-            eps = 1e-3
-            y_pred = np.clip(y_pred, eps, 1 - eps)
-            log_losses = -( y_test*np.log(y_pred) + (1 - y_test)*np.log(1 - y_pred) )
-            return np.mean( log_losses )
-            
+                    
         else:
             u = ((y_test - y_pred) ** 2).sum()
             v = ((y_test - y_test.mean()) ** 2).sum()
@@ -629,8 +616,8 @@ class Logistic(KRGEE):
         super().__init__(kernel, max_iter, lam, warm_start, tol, seed, 
                          verbose, get_corr, copy_R_inv, copy_K_train, copy_dofp, fix_phi)
         
-        self.grad_tol = 1e-7
-        self.hessian_tol = 1e-4
+        self.grad_tol = 1e-15
+        self.hessian_tol = 1e-12
 
         self.Du_mu_func = self.get_Du_mu_internal
         self.Vu_func = self.get_Vu_func
@@ -665,19 +652,74 @@ class Logistic(KRGEE):
         """
         return self.Du
     
-    def predict(self, X_test, R_12=None):
+    def predict_proba(self, X_test, R_12=None):
         f = self.f_predict(X_test)
 
         # mu_1 = self.mu(f)
         if R_12 is not None:
             y_c = np.clip(self.y, self.hessian_tol, 1 - self.hessian_tol)
             sig_inv_y = np.log(y_c/(1 - y_c))
+
             f += R_12 @ self.R_inv @ (sig_inv_y - self.f_curr)
 
         return self.mu(f)
     
-    def score(self, X_test, y_test, vcv_test = None, metric = 'log_loss'):
-        return super().score(X_test, y_test, metric=metric, vcv_test=vcv_test)
+    def predict(self, X_test, R_12=None):
+        """
+        Predict the target values for the test data
+        using the fitted model.
+
+        Parameters
+        ----------
+        X_test : np.ndarray
+            test data
+
+        R_12 : np.ndarray, optional
+            correlation matrix, by default None
+
+        Returns
+        -------
+        np.ndarray
+            predicted target values
+        """
+        mu = self.predict_proba(X_test, R_12)
+        return (mu >= 0.5).astype(float)
+    
+    def score(self, X_test, y_test, vcv_test = None, metric = 'log_loss', eps = 1e-3):
+        """
+        Score the model using the specified metric.
+        Parameters
+        ----------
+        X_test : np.ndarray
+            test data
+        y_test : np.ndarray
+            true labels
+        vcv_test : np.ndarray, optional
+            correlation matrix, by default None
+        metric : str, optional
+            evaluation metric, by default 'log_loss'
+        eps : float, optional
+            small value to avoid division by zero, by default 1e-3
+
+        Returns
+        -------
+        float
+            evaluation score
+        """
+
+        if metric == 'loss':
+            y_pred = self.predict(X_test, vcv_test)
+            return np.mean(y_pred != y_test)
+        
+        elif metric == 'log_loss':
+            y_pred_prob = self.predict_proba(X_test, vcv_test)
+            y_pred_prob = np.clip(y_pred_prob, eps, 1 - eps)
+
+            log_losses = -( y_test*np.log(y_pred_prob) + (1 - y_test)*np.log(1 - y_pred_prob) )
+            return np.mean( log_losses )
+    
+        else:
+            raise ValueError("Invalid metric. Use 'loss' or 'log_loss'.")
 
 
 class Poisson(KRGEE):
