@@ -91,7 +91,6 @@ class KRGEE:
                  get_corr = True,
                  copy_R_inv = False,
                  copy_K_train = False,
-                 copy_dofp = False, # phylogenetic degrees of freedom
                  fix_phi = False
                  ) -> None:
         
@@ -128,8 +127,7 @@ class KRGEE:
         self.copy_K = copy_K_train
         self.K_train = np.array([])
 
-        self.copy_dofp = copy_dofp
-        self.dofp = 1
+        # self.copy_dofp = copy_dofp
 
         self.phi = 1
         self.fix_phi = fix_phi
@@ -319,16 +317,6 @@ class KRGEE:
         else:
             self.K_train = np.asfortranarray( self.get_K(X, X), dtype=X.dtype)
 
-    def set_dofp(self, spps, vcv):
-        """
-        Set the phylogenetic degrees of freedom
-        """
-        if self.copy_dofp:
-            pass
-
-        else:
-            if isinstance(spps, np.ndarray) and isinstance(vcv, np.ndarray):
-                self.dofp = get_DFP(spps, vcv)
 
     def get_Du(self, f_curr):
         """
@@ -392,8 +380,6 @@ class KRGEE:
         theta = np.linalg.eigvalsh(H) # O(n^3)
         theta = np.real(theta)
         df_model = np.sum(theta / (theta + self.lam))
-        # phylogenetic degrees of freedom - model degrees of freedom
-        # self.dof = np.clip(self.dofp -  df_model, self.grad_tol, self.dofp)
         self.dof = np.clip(n - df_model, self.grad_tol, n)
 
     def set_rdf(self, y, y_hat):
@@ -532,11 +518,10 @@ class KRGEE:
                 print('phi: ', self.phi)
                 print('b: ', self.b)
                 print('fix_phi: ', self.fix_phi)
-                print('fdof: ', self.dofp)
                 print()
         
             if not self.fix_phi:
-                # unscaled hessian of the penalized coefficients (alpha without intercept)
+                #  hessian of the penalized coefficients (alpha without intercept)
                 HA = ((1/n)*(DuDaT_V_DuDa[1:, 1:])) + lK # O(n^2)
                 # UHA = (DuDaT_V_DuDa[1:, 1:] + lK) # O(n^2)
 
@@ -558,11 +543,6 @@ class KRGEE:
         self.X = X # store the training data for prediction
         self.set_R_inv(vcv) # it returns identity matrix if vcv is None
         self.set_K_train(self.X)
-
-        # it is left as 1 if vcv is None
-        # this is only used for the degrees of freedom
-        # and this itself is only used when fix_phi is False
-        self.set_dofp(spps, vcv)
 
         self.krgee_fit(self.K_train, y)
 
@@ -652,12 +632,11 @@ class Logistic(KRGEE):
                  get_corr = True,
                  copy_R_inv = False,
                  copy_K_train = False,
-                 copy_dofp = False, # phylogenetic degrees of freedom
                  fix_phi = False
                  ) -> None:
         
         super().__init__(kernel, max_iter, lam, warm_start, tol, seed, 
-                         verbose, get_corr, copy_R_inv, copy_K_train, copy_dofp, fix_phi)
+                         verbose, get_corr, copy_R_inv, copy_K_train, fix_phi)
         
         self.grad_tol = 1e-15
         self.hessian_tol = 1e-12
