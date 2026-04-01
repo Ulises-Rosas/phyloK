@@ -129,12 +129,11 @@ class KRGEE:
         self.K_train = np.array([])
 
         self.copy_dofp = copy_dofp
-        self.dofp = 1
+        # self.dofp = 1
 
         self.phi = 1
         self.fix_phi = fix_phi
         self.r = np.array([])
-        self.r_pearson = np.array([])
         self.rho = np.array([])
         self.dof = 1 # degrees of freedom
 
@@ -144,6 +143,7 @@ class KRGEE:
         self._update_rho = False
         self.grad_tol = 1e-14
         self.hessian_tol = 1e-10
+        self.grad_clip = 3 # currently only used for intercept
 
     def __repr__(self):
         return f"KRGEE(kernel={self.kernel}, max_iter={self.max_iter}, lam={self.lam}, warm_start={self.warm_start}, tol={self.tol}, seed={self.seed})"
@@ -319,17 +319,6 @@ class KRGEE:
         else:
             self.K_train = np.asfortranarray( self.get_K(X, X), dtype=X.dtype)
 
-    def set_dofp(self, spps, vcv):
-        """
-        Set the phylogenetic degrees of freedom
-        """
-        if self.copy_dofp:
-            pass
-
-        else:
-            if isinstance(spps, np.ndarray) and isinstance(vcv, np.ndarray):
-                self.dofp = get_DFP(spps, vcv)
-
     def get_Du(self, f_curr):
         """
         Get mu vector (estimator) and W matrix with mu derivatives
@@ -393,8 +382,6 @@ class KRGEE:
         theta = np.linalg.eigvalsh(H) # O(n^3)
         theta = np.real(theta)
         df_model = np.sum(theta / (theta + self.lam))
-        # phylogenetic degrees of freedom - model degrees of freedom
-        # self.dof = np.clip(self.dofp -  df_model, self.grad_tol, self.dofp)
         self.dof = np.clip(n - df_model, self.grad_tol, n)
 
     def set_rdf(self, y, y_hat):
@@ -408,18 +395,16 @@ class KRGEE:
         # effective number of parameters
         ddof = 1
         df_model = np.cov(y_hat, y, ddof=ddof)[0, 1] / np.var(y - y_hat, ddof=ddof)
-        # df_model *= self.dofp
-        # self.dof = np.clip(self.dofp - df_model, self.epsilon, self.dofp)
         n = len(y_hat)
         self.dof = np.clip(n - df_model, self.grad_tol, n)
 
-    def set_phi(self):
-        
-        self.phi = np.dot(self.r_pearson, self.r_pearson)/self.dof # O(n)
+    def set_phi(self, ve):
 
-    def set_rho(self):
+        self.phi = np.dot(ve, ve)/self.dof # O(n)
 
-        self.rho = np.outer(self.r_pearson, self.r_pearson) # O(n^2)
+    def set_rho(self, ve):
+
+        self.rho = np.outer(ve, ve) # O(n^2)
         self.rho = self.rho/(self.phi * self.dof)
         # make the diagonal 1
         np.fill_diagonal(self.rho, 1)
@@ -460,18 +445,28 @@ class KRGEE:
             DvR = Dv[:, None] * (self.R_inv * (1/self.phi))
             # error
             self.r = ( y - u ) 
-            # V_u^(-1/2) x error
-            self.r_pearson = vu_sqrt_inv * self.r 
+            # V_u^(-1/2) x error (pearson residuals)
+            ve = vu_sqrt_inv * self.r
+            # D_u x V_u^(-1/2) x R^(-1) x phi^(-1) x  V_u^(-1/2) x D_u x K
+            DvRvDK = np.matmul( DvR , (Dv[:, None] * K) ) # O(n^3)
 
-            DvRve = np.dot(DvR, self.r_pearson)
-            
+            # D_u x V_u^(-1/2) x R^(-1) x phi^(-1) V_u^(-1/2) x error
+            DvRve = np.dot(DvR, ve)
+
             # alpha update
             Lp  = -DvRve + (n * self.lam * self.alpha)
-            Lpp = np.matmul( DvR , (Dv[:, None] * K) ) + nlI
+            # Lp  = DvRvDK @ self.alpha + DvRve # O(n^2)
+            Lpp = DvRvDK + nlI # O(n^2)
 
             # intercept update
             Lp_int  = -np.sum(DvRve)
             Lpp_int = np.sum( np.dot( DvR, (Dv * ones) ) )
+
+
+            # clip gradient
+            if (Lp_int)**2 >= self.grad_clip:
+                Lp_int = self.grad_clip * Lp_int/(Lp_int)**2
+
             
             # newton-raphson update.
             # avoid division by zero
@@ -479,7 +474,14 @@ class KRGEE:
                 self.b -= (Lp_int/Lpp_int)
 
             # update alpha
+            # Lp clipping
+            # Lp_norm = np.linalg.norm(Lp, ord=2)
+            # if Lp_norm >= self.grad_clip:
+            #     Lp = (self.grad_clip / Lp_norm) * Lp
+
+
             self.alpha -= np.linalg.solve(Lpp, Lp) # O(n^3)
+            # self.alpha = np.linalg.solve( Lpp, Lp) # O(n^3)
             # self.alpha[np.abs(self.alpha) < self.grad_tol] = 0.0
 
             # new optimal function val
@@ -495,15 +497,13 @@ class KRGEE:
                 print('phi: ', self.phi)
                 print('b: ', self.b)
                 print('fix_phi: ', self.fix_phi)
-                print('fdof: ', self.dofp)
                 print()
 
             f_curr = f_new
         
             if not self.fix_phi:
                 self.set_df(K, Lpp, n)
-                # self.set_rdf(y, f_curr)
-                self.set_phi()
+                self.set_phi(ve)
 
         self.f_curr = f_curr
         self.y = y.copy()
@@ -518,11 +518,6 @@ class KRGEE:
         self.X = X # store the training data for prediction
         self.set_R_inv(vcv) # it returns identity matrix if vcv is None
         self.set_K_train(self.X)
-
-        # it is left as 1 if vcv is None
-        # this is only used for the degrees of freedom
-        # and this itself is only used when fix_phi is False
-        self.set_dofp(spps, vcv)
 
         self.krgee_fit(self.K_train, y)
 
