@@ -3,6 +3,7 @@ import time
 from collections import deque
 
 import numpy as np
+from alpha_beta_weighting import weighted_sample
 
 def progressbar(it, prefix="", size=60, out=sys.stdout): 
     """
@@ -96,7 +97,7 @@ def pick_init_index(P_index, P_r, seed):
         
     return init_idx
 
-def init_model(X_train, y_train, vcv_train, spps_train, model, 
+def init_model(X_train, y_train, vcv_train, model, 
                     param_init, i):
     """
     Initialize the model.
@@ -115,26 +116,27 @@ def init_model(X_train, y_train, vcv_train, spps_train, model,
     # for the initial model, R inv should be calculated
     model.copy_R_inv = False
 
-    # we also calcualte once the phylogenetic degrees of freedom
-    model.copy_dofp = False
 
     # for the initial model, initial params should be random
     # when it is the first fold iteration. Otherwise
     # we can use the previous solution as the initial
     # i is the fold index
-    model.warm_start = False if i == 0 else True
+    # model.warm_start = False if i == 0 else True
+    model.warm_start = False
 
     # set the initial hyperparameters
     model.set_params(**param_init)
     # model fit, while also setting the R_inv matrix
-    model.fit(X_train, y_train, vcv_train, spps_train)
+    time_start = time.time()
+    model.fit(X_train, y_train, vcv_train)
+    time_end = time.time()
+    print(f"Initial model fit time: {time_end - time_start:.2f} seconds")
 
     # for the next iteration alpha is used
-    model.warm_start = True 
+    model.warm_start = False
+
     # for the next iteration R_inv is used
     model.copy_R_inv = True 
-    # use the the same phylogenetic degrees of freedom for the next iteration
-    model.copy_dofp = True
 
 def shuffle_data(X, y, vcv, seed):
     """
@@ -163,7 +165,6 @@ def sort_P_r(P_r, P_index):
         P_r = P_r[np.argsort(P_r[:,lam_index])[::-1],]
 
     return P_r
-
 
 def random_folds(n, k, fold_size, sort_folds = True, rng = None):
     """
@@ -200,7 +201,7 @@ def random_folds(n, k, fold_size, sort_folds = True, rng = None):
         myfolds.append([train_idx, test_idx])
     return myfolds
 
-def k_fold_cv_random(X, y, vcv, spps, model, 
+def k_fold_cv_random(X, y, vcv, model, 
                    params,
                    folds = 3, 
                    sample = 100,
@@ -251,17 +252,17 @@ def k_fold_cv_random(X, y, vcv, spps, model,
         y_train, y_test = y[train_idx], y[test_idx]
 
         vcv_train  = vcv[train_idx,:][:,train_idx] if isinstance(vcv, np.ndarray) else None
-        spps_train = spps[train_idx] if isinstance(spps, np.ndarray) else None
+        vcv_test_12 = vcv[test_idx,:][:,train_idx] if isinstance(vcv, np.ndarray) else None
         
         # inverse of the correlation is calculated only once
         # This is used to test all the rest of hyperparameters
         # An initial alpha is calculated from a previously 
         # specified hyperparameter. This initial alpha is
         # used for all the folds
-        init_model(X_train, y_train, vcv_train, spps_train,
+        init_model(X_train, y_train, vcv_train,
                    model, param_init, i)
         
-        init_err = model.score(X_test, y_test)
+        init_err = model.score(X_test, y_test, vcv_test_12)*len(y_test)
         all_errors.append([init_idx, init_err])
 
         for j, p_j in enumerate(P_r):
@@ -272,17 +273,19 @@ def k_fold_cv_random(X, y, vcv, spps, model,
             tmp_param = dict(zip(P_n, p_j))
             
             model.set_params(**tmp_param)
-            model.fit(X_train, y_train, vcv_train)
-            tmp_err = model.score(X_test, y_test)
+            # vcv and spps are already copied
+            # from init_model
+            model.fit(X_train, y_train)
+            tmp_err = model.score(X_test, y_test, vcv_test_12)*len(y_test)
             all_errors.append([j, tmp_err])
 
     # O(sample*folds)
     out = {}
     for pi, err in all_errors:
         if pi in out:
-            out[pi] += (err/folds)
+            out[pi] += (err/n)
         else:    
-            out[pi] = (err/folds)
+            out[pi] = (err/n)
     
     # out = lkrgee_best_params # for testing
     # print("Time taken: ", time.time() - start)
@@ -296,9 +299,126 @@ def k_fold_cv_random(X, y, vcv, spps, model,
 
     # This let model fit with another correlation matrix
     model.copy_R_inv = False
-    # This let model fit with another phylogenetic degrees of freedom
-    model.copy_dofp = False
     # let the model start with random alpha
+    model.warm_start = False
+    
+    return best_
+
+
+def k_fold_cv_weigthed(X, y, vcv, model, W,
+                       params,
+                       folds = 3, 
+                       sample = 100,
+                       verbose = True,
+                       seed = 12038):
+    """
+    """
+    
+    model.verbose = False
+    np.random.seed(seed=seed)
+    rng = np.random.RandomState(seed=seed)
+    
+    # X = X_train
+    P_r, P_index, P_n = sample_hyperParams(params, seed, sample, verbose)
+    
+    # if lambda is present, then sort by lambda
+    P_r = sort_P_r(P_r, P_index)
+
+    # a random index if lambda is not present. 
+    # otherwise (most typical), the index with the highest lambda
+    init_idx = pick_init_index(P_index, P_r, seed)
+    param_init = dict(zip(P_n, P_r[init_idx,:]))
+
+    n, _ = X.shape
+    # linked list to store all the errors
+    all_errors = deque([])
+    myfolds = weighted_sample(W, rng, folds=folds)
+
+    # O(n^3*folds*sample)
+    for i, (train_idx, test_idx) in enumerate(myfolds):
+        print("Fold: ", i)
+        # print(test_idx)
+        X_train, X_test = X[train_idx, :], X[test_idx, :]
+        y_train, y_test = y[train_idx], y[test_idx]
+
+        is_vcv =  isinstance(vcv, np.ndarray)
+        vcv_train = None
+        vcv_test_12 = None
+
+        if is_vcv and model.add_extraK:
+            model.Rnn = vcv[train_idx,:][:,train_idx]
+            model.Rzn = vcv[test_idx,:][:,train_idx]
+
+        elif is_vcv and not model.add_extraK:
+            vcv_train = vcv[train_idx,:][:,train_idx]
+            vcv_test_12 = vcv[test_idx,:][:,train_idx]
+
+        elif not is_vcv and model.add_extraK:
+            raise ValueError("Missing correlation structure at Cross validation")
+        
+        else:
+            # everything is None
+            pass
+
+        # inverse of the correlation is calculated only once
+        # This is used to test all the rest of hyperparameters
+        # An initial alpha is calculated from a previously 
+        # specified hyperparameter. This initial alpha is
+        # used for all the folds
+        init_model(X_train, y_train, vcv_train,
+                   model, param_init, i)
+        
+        # init_err1 = model.score(X_test, y_test, vcv_test_12)*len(y_test)
+        # init_err2 = model.score(X_test, y_test, None)*len(y_test)
+        # init_err = max(init_err1, init_err2)
+
+        init_err = model.score(X_test, y_test, None)*len(y_test)
+
+        all_errors.append([init_idx, init_err])
+
+        j = 0
+        for p_j in progressbar(P_r, prefix = "Testing hyperparameters: ", size=60):
+            
+            if j == init_idx:
+                continue
+
+            tmp_param = dict(zip(P_n, p_j))
+            
+            model.set_params(**tmp_param)
+            # vcv and spps are already copied
+            # from init_model
+            model.fit(X_train, y_train, vcv_train)
+
+            # tmp_err1 = model.score(X_test, y_test, vcv_test_12)*len(y_test)
+            # tmp_err2 = model.score(X_test, y_test, None)*len(y_test)
+            # tmp_err = max(tmp_err1, tmp_err2)
+
+            tmp_err = model.score(X_test, y_test, None)*len(y_test)
+
+            all_errors.append([j, tmp_err])
+            j += 1
+
+    # O(sample*folds)
+    out = {}
+    for pi, err in all_errors:
+        if pi in out:
+            out[pi] += (err/n)
+        else:    
+            out[pi] = (err/n)
+    
+    # out = lkrgee_best_params # for testing
+    # print("Time taken: ", time.time() - start)
+    
+    # O(sample * log sample)
+    best_pi,best_err = sorted(out.items(), key=lambda kv: kv[1], reverse=False)[0]
+    best_ = dict(zip(P_n, P_r[best_pi,:]))
+
+    if verbose:
+        print("CV score: ", best_err)
+
+    # This let model fit with another correlation matrix
+    model.copy_R_inv = False
+    # let the model start with new alpha
     model.warm_start = False
     
     return best_
