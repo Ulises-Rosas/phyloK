@@ -36,6 +36,15 @@ def tree_postorder(root):
 
 # tree = "((4,5),(6,7));"
 def alpha_weighting(tree, alpha=1/4):
+    """
+    Weight the leaves of a phylogenetic tree based on 
+    on the number of decendents using an alpha parameter. 
+
+    Since it uses a hash table to store the weights, 
+    the order of the leaves is not guaranteed 
+    to be the same as in the input tree.
+
+    """
     _, root = parseNewickTree(tree)
 
     L = tree_postorder(root)
@@ -50,16 +59,16 @@ def alpha_weighting(tree, alpha=1/4):
         r = v.right
         v.branch_length = l.branch_length + r.branch_length
 
-    # math.log(1)
     # alpha = 1/4
     A = {}
     # S = [(root, math.log(1))]
     S = [(root, 1)]
     while S:
         pa,p = S.pop()
-        A[pa] = p
 
         if is_leaf(pa):
+            # store only leaves probabilities
+            A[pa.name] = p
             continue
 
         nl = pa.left.branch_length
@@ -70,16 +79,17 @@ def alpha_weighting(tree, alpha=1/4):
         # S.append((pa.left, math.log(pl) + p))
         # S.append((pa.right, math.log(pr) + p))
         S.append((pa.left, pl * p))
-        S.append((pa.right, pr * p))        
+        S.append((pa.right, pr * p))
 
-    probs = []
-    leaves = []
-    for k,v in A.items():
-        if is_leaf(k):
-            leaves.append(k.name)
-            probs.append(v)
+    return A
+    # probs = []
+    # leaves = []
+    # for k,v in A.items():
+    #     if is_leaf(k):
+    #         leaves.append(k.name)
+    #         probs.append(v)
 
-    return np.asarray(leaves), np.asarray(probs)
+    # return np.asarray(leaves), np.asarray(probs)
 
 def sample_mChoice(P, rng, Fz):
     """
@@ -145,15 +155,18 @@ def weighted_sample(P, rng, folds=5): # type: ignore
 # from phylokrr.treeio import get_vcv
 
 # rng = np.random.default_rng(seed=12038)
-# V, leaves = get_vcv(tree,  process = "OU", sigma2 = 1, alpha = 1e-5)
-# P = np.linalg.inv(V) @ np.ones(len(leaves))
-# P /= np.sum(P)
+# V, leaves = get_vcv(tree,  process = "OU", sigma2 = 1, alpha = 1)
+
+# # P = np.linalg.inv(V) @ np.ones(len(leaves))
+# # P /= np.sum(P)
 
 
 
 
-# # leaves, P = alpha_weighting(tree, alpha = 1)
-# # print(P)
+# A = alpha_weighting(tree, alpha = 1e2)
+# P = np.array([A[leaf] for leaf in leaves])
+# # print(A)
+# print(P)
 
 # n = len(leaves)
 # test_idx, train_idx = split_data_idx(num_test=int(n*0.25), P=P, rng=rng)
@@ -171,7 +184,8 @@ def weighted_sample(P, rng, folds=5): # type: ignore
 # # print("Test Leaves: ", test_leaves)
 
 # # # # # myfolds
-# with open("folds_Boyko.txt", 'w') as f:
+# with open("folds.txt", 'w') as f:
+# # with open("folds_Boyko.txt", 'w') as f:
 # # with open("folds_random.txt", 'w') as f:
 #     for train_idx_f, test_idx_f in myfolds:
 
