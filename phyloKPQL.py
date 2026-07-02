@@ -3,7 +3,33 @@ import time
 
 
 import numpy as np
-from phylokrr.kernels import linear_kernel, RBF_kernel
+from phylokrr.kernels import linear_kernel
+from scipy import linalg as la
+
+def distance_matrix(a, b):
+    """
+    l2 norm squared matrix
+    """
+    return np.linalg.norm(a[:, None, :] - b[None, :, :], axis=-1)**2
+
+
+def RBF_kernel(a, b, gamma, extra_K = None):
+    """
+    Radial Basis Function
+    """        
+    # data sim
+    tmp_rbf = -gamma * distance_matrix(a, b)
+
+    # if extra_K is not None:
+    #     tmp_rbf += extra_K
+
+    np.exp(tmp_rbf, tmp_rbf) # RBF kernel. Inplace exponentiation
+
+    if extra_K is not None:
+        tmp_rbf += extra_K
+
+    return tmp_rbf
+
 
 def progressbar(it, prefix="", size=60, out=sys.stdout): 
     """
@@ -26,55 +52,6 @@ def progressbar(it, prefix="", size=60, out=sys.stdout):
         show(i+1)
     print("\n", flush=True, file=out)
 
-def center_kernel(K):
-    """
-    Center the kernel matrix
-
-    ref: Kernel methods in computational biology, 
-    Scholkopf, Tsuda, Vert. pp. 50\\
-    \\tilde K = (I - e/n)( K )(I - e/n)
-
-    e is singular matrix of ones\\
-    I is identity matrix\\
-    n is the number of samples\\
-    K is the kernel matrix of size n x p
-    """
-
-    n,p = K.shape
-    left  = np.eye(n, dtype=np.float64) - (1/n)*np.ones((n,n), dtype=np.float64)
-    right = np.eye(p, dtype=np.float64) - (1/n)*np.ones((p,p), dtype=np.float64)
-    return left @ K @ right
-
-def get_DFP(spps_train, vcv):
-    """
-    Get degrees of freedom sensu Paradis
-    Params
-    ------
-    tree: nodes, root
-    T_spps_i: list of species index in nodes
-    vcv: vcv of the species
-    """
-
-    n1 = spps_train[0]
-    # O(n), find the root
-    while n1.ancestor:
-        n1 = n1.ancestor
-    root = n1
-
-    vn = set()
-    bls = 0
-    for n in spps_train:
-        bls += n.branch_length
-        tmp_anc = n.ancestor
-        while (tmp_anc not in vn) and (tmp_anc != root):
-            vn.add(tmp_anc)
-            tmp_anc = tmp_anc.ancestor
-
-    for i in vn:
-        bls += i.branch_length
-
-    return (bls * vcv.shape[0])/np.sum(np.diag(vcv))
-
 class KRGEE:
     """
     Kernel Ridge Generalized Estimating Equations for 1 cluster.
@@ -91,10 +68,15 @@ class KRGEE:
                  get_corr = True,
                  copy_R_inv = False,
                  copy_K_train = False,
-                 copy_dofp = False, # phylogenetic degrees of freedom
-                 fix_phi = False
+                 fix_phi = False,
+                 add_extraK= False
                  ) -> None:
         
+        self.add_extraK = add_extraK
+        
+        self.Rnn = None
+        self.Rzn = None
+
         self.alpha = np.array([])
         self.b = 0
 
@@ -116,37 +98,68 @@ class KRGEE:
         # in form of a correlation matrix
         self.get_corr = get_corr 
 
-        self.Du_mu_func = lambda x: (x, x)
-        self.Vu_func = lambda x: x
-
+        self.Du_mu_func = lambda x: (np.ones(x.shape[0]), x)
+        self.Vu_func = lambda x: np.ones( x.shape[0] )
+        
         self.X = np.array([])
         self.y = np.array([])
 
-        self.copy_R_inv = copy_R_inv        
+        self.copy_R_inv = copy_R_inv
         self.R_inv = np.array([])
         
         self.copy_K = copy_K_train
         self.K_train = np.array([])
+        self.K_col_mean = np.array([])
+        self.K_all_mean = np.array([])
 
-        self.copy_dofp = copy_dofp
-        # self.dofp = 1
 
         self.phi = 1
         self.fix_phi = fix_phi
         self.r = np.array([])
         self.rho = np.array([])
         self.dof = 1 # degrees of freedom
+        self.L_inv = np.array([]) # R^-1/2
+
 
         self.f_curr = np.array([]) # current function values
 
         self._verbose = False
         self._update_rho = False
-        self.grad_tol = 1e-14
+        self.grad_tol = 1e-10
         self.hessian_tol = 1e-10
-        self.grad_clip = 3 # currently only used for intercept
+        self.grad_clip = 2 # gradient clipping
 
     def __repr__(self):
         return f"KRGEE(kernel={self.kernel}, max_iter={self.max_iter}, lam={self.lam}, warm_start={self.warm_start}, tol={self.tol}, seed={self.seed})"
+    
+    
+    def center_kernel(self, K, trainxtest = False):
+        """
+        Center the kernel matrix
+
+        ref: Kernel methods in computational biology, 
+        Scholkopf, Tsuda, Vert. pp. 50\\
+        \\tilde K = (I - e/n)( K )(I - e/n)
+
+        e is singular matrix of ones\\
+        I is identity matrix\\
+        n is the number of samples\\
+        K is the kernel matrix of size n x p
+
+        Only works for square matrices 
+
+        Here is a general attempt for non-square matrices
+        """
+        K_row_mean = np.mean(K, axis = 1)
+
+        if not trainxtest:
+            self.K_col_mean = np.mean(K, axis = 0)
+            self.K_all_mean = np.mean(K)
+
+        K -= self.K_col_mean
+        K -= K_row_mean.reshape(-1,1)
+        K += self.K_all_mean
+        return K
 
     def set_params(self, **params):
         """
@@ -164,7 +177,7 @@ class KRGEE:
                 'intercept': self.b, 
                 'tol': self.tol}
 
-    def get_K(self, A, B):
+    def get_K(self, A, B, trainxtest=False):
         """
         Get the kernel matrix
         depending on the kernel type specified
@@ -184,17 +197,21 @@ class KRGEE:
             kernel
         """
         if self.kernel == 'rbf':
-            K =  RBF_kernel(A, B, self.gamma)
-            return center_kernel(K)
-            # return K
+
+            if self.add_extraK:
+                R = self.Rzn if trainxtest else self.Rnn
+            else:
+                R = None
+
+            K = RBF_kernel(A, B, self.gamma, extra_K=R)
 
         elif self.kernel == 'linear':
             K =  linear_kernel(A, B, self.c)
-            return center_kernel(K)
-            # return K
-        
+
         else:
-            return A
+            K =  A
+
+        return self.center_kernel(K, trainxtest)
         
     def pre_process_V(self, V):
         """
@@ -215,7 +232,6 @@ class KRGEE:
 
         n, _ = V.shape
         V = V/np.max(V)
-        # V = V/np.linalg.norm(V, ord='fro')
         detV_n = np.linalg.det(V)**(1/n)
         V = V/detV_n if detV_n != 0 else V
         
@@ -233,11 +249,16 @@ class KRGEE:
         """
         Inverse of the correlation matrix
         """
-        L = np.linalg.cholesky(R)
-        L_inv = np.linalg.inv(L)
-        return L_inv.T @ L_inv
-        # return np.linalg.solve(L.T, np.linalg.solve(L, np.eye(R.shape[0], dtype=R.dtype)))
-        # return np.linalg.pinv(R)
+        # L = np.linalg.cholesky(R + np.eye(R.shape[0]) * self.hessian_tol)
+        # self.L_inv = np.linalg.inv(L)
+
+        # return self.L_inv.T @ self.L_inv
+
+        E,Q = la.eigh(R + np.eye(R.shape[0]) * self.hessian_tol)
+        # E,Q = la.eigh(R)
+
+        self.L_inv = Q @ np.diag(E**(-1/2)) @ Q.T
+        return Q @ np.diag(E**(-1)) @ Q.T
     
     def get_R_inv(self, vcv):
         """
@@ -286,6 +307,7 @@ class KRGEE:
             else:
                 n,_ = self.X.shape
                 self.R_inv = np.eye(n)
+                self.L_inv = np.eye(n)
 
     def set_K_train(self, X):
         """
@@ -313,15 +335,28 @@ class KRGEE:
         X : np.ndarray
             input matrix
         """
+
+        if X is None:
+            self.K_train = None
+            return 
+
         if self.copy_K and len(self.K_train) != 0:
             pass
 
         else:
-            self.K_train = np.asfortranarray( self.get_K(X, X), dtype=X.dtype)
+            self.K_train = np.asfortranarray( self.get_K(X, X), dtype=float)
+
 
     def get_Du(self, f_curr):
         """
-        Get mu vector (estimator) and W matrix with mu derivatives
+        Get mu vector (estimator) and W matrix with mu derivatives 
+        with respect to f(x).
+
+
+        Wii = \\frac{\partial \mu}{\partial f(x)}
+        if \mu is the identity function, then Wii = 1
+
+
         from the current function values.
 
         The function is will depend on the model being used.
@@ -359,8 +394,8 @@ class KRGEE:
         # Vu[Vu < self.epsilon] = self.epsilon
         # return Vu**(-1/2)
         return self.Vu_func(f_curr)**(-1/2)
-    
-    def set_df(self, K, Lpp, n):
+
+    def set_df(self, H):
         """
         residual degrees of freedom
 
@@ -376,8 +411,7 @@ class KRGEE:
             regularization parameter
 
         """
-        
-        H = ((1/n) * K) @ Lpp # O(n^3)
+        n = H.shape[0]
 
         theta = np.linalg.eigvalsh(H) # O(n^3)
         theta = np.real(theta)
@@ -393,100 +427,111 @@ class KRGEE:
         pp. 77, 233
         """
         # effective number of parameters
-        ddof = 1
-        df_model = np.cov(y_hat, y, ddof=ddof)[0, 1] / np.var(y - y_hat, ddof=ddof)
+        df_model = np.cov(y_hat, y, ddof=1)[0, 1] / np.var(y - y_hat, ddof=1)
         n = len(y_hat)
         self.dof = np.clip(n - df_model, self.grad_tol, n)
 
-    def set_phi(self, ve):
+    def set_phi(self, e):
+        # pearson residual
+        err = e * self.Vu_func(self.f_curr)**(-1/2)
+        self.phi = np.dot(err, err)/self.dof # O(n)
+    
+    def get_V_Inv(self, f_curr):
+        """
+        Get the square root of the inverse of the V matrix
+        V = A^1/2 R A^1/2 \phi
+        A = variance of \mu
+        R = correlation matrix
+        phi = dispersion parameter
 
-        self.phi = np.dot(ve, ve)/self.dof # O(n)
+        V^(-1) = ( A^1/2  R      A^1/2  \phi)^-1
+               =   A^-1/2 R^-1   A^-1/2 \phi^-1
 
-    def set_rho(self, ve):
+        O(n^2) complexity
 
-        self.rho = np.outer(ve, ve) # O(n^2)
-        self.rho = self.rho/(self.phi * self.dof)
-        # make the diagonal 1
-        np.fill_diagonal(self.rho, 1)
+        Parameters
+        ----------
+        f_curr : np.ndarray
+            current function values
+        Returns
+        -------
+        np.ndarray
+            V^(-1/2)
+        """
+        A_sqInv = self.Vu_func(f_curr)**(-1/2)
+        V_Inv  = (A_sqInv[:, None] * self.R_inv) * A_sqInv
+        V_Inv *= (self.phi)**(-1) # O(n^2)    
+        return V_Inv
 
     def krgee_fit(self, K, y):
         
-        n, p = K.shape
-        ones = np.ones(n, dtype=K.dtype)
-        nlI = np.diag(n * self.lam * ones)
+        n = y.shape[0]
+        p = K.shape[1] if K is not None else 0
+        K_dtype = K.dtype if K is not None else float
 
-        if not self.warm_start or (np.nan in self.alpha):
+        ones = np.ones(n, dtype=K_dtype)
+        
+        if p > 0:
+            K_0 = np.zeros((n + 1, p + 1), dtype=K_dtype)
+            K_0[1:, 1:] = K
+            lK_0 = self.lam * K_0
+            lK = self.lam * K
+
+        else:
+            lK_0 = np.array([[0]], dtype=K_dtype)
+            lK = np.array([[0]], dtype=K_dtype)
+
+
+        # concatenate ones to K for intercept
+        K_a = np.column_stack((ones, K)) if p > 0 else ones.reshape(-1, 1)
+        K_a = np.asfortranarray(K_a, dtype=K_dtype)
+
+        if not self.warm_start or np.any(np.isnan(self.alpha)):
             # np.random.seed(self.seed)
-            # self.alpha = np.random.normal(0, np.sqrt(2/p), size=p) # alpha weights
-            # self.b = np.random.normal(0, np.sqrt(2), size=1) # intercept
-            self.alpha = np.zeros(p) # alpha weights
-            self.b = np.zeros(1) # intercept            
-
-            self.alpha = np.ascontiguousarray(self.alpha, dtype=K.dtype)
-            self.b = np.ascontiguousarray(self.b, dtype=K.dtype)
-
+            # self.alpha = np.random.normal(size=p + 1)*np.sqrt(1./n) # alpha weights
+            self.alpha = np.zeros(p + 1) # alpha weights
+            self.alpha = np.ascontiguousarray(self.alpha, dtype=K_dtype)
             self.phi = 1
-            self.rho = np.eye(n, dtype=K.dtype)
 
         assert len(self.alpha) > 0, "The model needs to be fitted first"
-        
-        f_curr = K @ self.alpha + self.b
+    
+        f_curr = K_a @ self.alpha
         conv = False
         for i in range(self.max_iter):
-            # get derivatives of estimator
-            # and the inverse of the square root
-            # of the variance of estimator
+            # get derivatives of \mu and \mu
+            
             Du, u = self.get_Du(f_curr)
-            vu_sqrt_inv = self.get_Vu_sqrt_inv(f_curr)
-            
-            # D_u x V_u^(-1/2)
-            Dv  = Du * vu_sqrt_inv
-            # D_u x V_u^(-1/2) x R^(-1) x phi^(-1)
-            DvR = Dv[:, None] * (self.R_inv * (1/self.phi))
-            # error
-            self.r = ( y - u ) 
-            # V_u^(-1/2) x error (pearson residuals)
-            ve = vu_sqrt_inv * self.r
-            # D_u x V_u^(-1/2) x R^(-1) x phi^(-1) x  V_u^(-1/2) x D_u x K
-            DvRvDK = np.matmul( DvR , (Dv[:, None] * K) ) # O(n^3)
+            V_Inv = self.get_V_Inv(f_curr) # O(n^2)
+    
+            DuDa = Du[:,None] * K_a # O(n^2)
+            DuDaT_V = np.matmul(DuDa.T, V_Inv) # O(n^3)
+            DuDaT_V_DuDa = np.matmul(DuDaT_V, DuDa) # O(n^3)
 
-            # D_u x V_u^(-1/2) x R^(-1) x phi^(-1) V_u^(-1/2) x error
-            DvRve = np.dot(DvR, ve)
+            H = ((1/n)*(DuDaT_V_DuDa)) + lK_0 # O(n^2)
+            # if np.linalg.cond(H) > 1/sys.float_info.epsilon:
+            #    H += np.eye(H.shape[0]) * self.hessian_tol
 
-            # alpha update
-            Lp  = -DvRve + (n * self.lam * self.alpha)
-            # Lp  = DvRvDK @ self.alpha + DvRve # O(n^2)
-            Lpp = DvRvDK + nlI # O(n^2)
+            e = y - u # O(n)
 
-            # intercept update
-            Lp_int  = -np.sum(DvRve)
-            Lpp_int = np.sum( np.dot( DvR, (Dv * ones) ) )
+            # gradient
+            G =  ((-1/n)*(DuDaT_V @ e)) + lK_0 @ self.alpha # O(n^2)
 
+            G_norm = np.linalg.norm(G, ord=2)
+            # gradient clipping, O(n)
+            # to avoid exploding gradients
+            # if G_norm >= self.grad_clip:
+            #     G *= (self.grad_clip / G_norm)
+            if G_norm/max(1, np.linalg.norm(self.alpha, ord=2)) <= 1e-8:
+                if self.verbose:
+                    print("Gradient norm is below the clipping threshold")
+                conv = True
+                break
 
-            # clip gradient
-            if (Lp_int)**2 >= self.grad_clip:
-                Lp_int = self.grad_clip * Lp_int/(Lp_int)**2
-
-            
-            # newton-raphson update.
-            # avoid division by zero
-            if abs(Lpp_int) > self.hessian_tol and abs(Lp_int/Lpp_int) > self.hessian_tol:
-                self.b -= (Lp_int/Lpp_int)
-
-            # update alpha
-            # Lp clipping
-            # Lp_norm = np.linalg.norm(Lp, ord=2)
-            # if Lp_norm >= self.grad_clip:
-            #     Lp = (self.grad_clip / Lp_norm) * Lp
-
-
-            self.alpha -= np.linalg.solve(Lpp, Lp) # O(n^3)
-            # self.alpha = np.linalg.solve( Lpp, Lp) # O(n^3)
-            # self.alpha[np.abs(self.alpha) < self.grad_tol] = 0.0
+            self.alpha -= np.linalg.solve( H, G ) # O(n^3)
 
             # new optimal function val
-            f_new = K @ self.alpha + self.b
-            if self.check_convergence(f_new, f_curr):
+            f_new = K_a @ self.alpha
+            if self.check_convergence(f_new, f_curr) and i > 1:
                 if self.verbose:
                     print("Converged at update = %i" %i)
                 conv = True
@@ -498,20 +543,32 @@ class KRGEE:
                 print('b: ', self.b)
                 print('fix_phi: ', self.fix_phi)
                 print()
-
-            f_curr = f_new
         
             if not self.fix_phi:
-                self.set_df(K, Lpp, n)
-                self.set_phi(ve)
+                if p > 0:
+                    #  hessian of the penalized coefficients (alpha without intercept)
+                    HA = ((1/n)*(DuDaT_V_DuDa[1:, 1:])) + lK # O(n^2)
+                    # UHA = (DuDaT_V_DuDa[1:, 1:] + lK) # O(n^2)
+                    self.set_df(HA) # O(n^3)
+                else:
+                    self.dof = n - 1
+                
+                self.set_phi(e)
+
+            f_curr = f_new
 
         self.f_curr = f_curr
         self.y = y.copy()
 
-        if self.verbose and not conv:
-            print("No convergence after %i iterations" % self.max_iter)
+        # if self.verbose and not conv:
+        #     print("No convergence after %i iterations" % self.max_iter)
 
-    def fit(self, X, y, vcv = None, spps = None):
+        if not conv:
+            print("No convergence after %i iterations" % self.max_iter)
+            print("gamma, phi, lam:")
+            print(self.gamma, self.phi, self.lam)
+
+    def fit(self, X, y, vcv = None):
         """
         Fit the model
         """
@@ -541,13 +598,45 @@ class KRGEE:
 
     def f_predict(self, X_test):
         assert len(self.alpha) > 0, "The model needs to be fitted first"
+        assert X_test is not None, "X_test should not be None"
 
-        K_test = self.get_K(X_test, self.X)
-        f =  K_test @ self.alpha + self.b
+        if self.K_train is None:
+            f = self.alpha[0] * np.ones(X_test.shape[0])
+
+        else:            
+            K_test = self.get_K(X_test, self.X, trainxtest = True)
+            b, alpha = self.alpha[0], self.alpha[1:]
+            f =  K_test @ alpha + b
 
         return f
     
-    def score(self, X_test, y_test, metric='rmse', vcv_test = None):
+    def predict(self, X_test, R_12 = None):
+        """
+        Predict the response for identity link function
+
+        Parameters
+        ----------
+        X_test : np.ndarray
+            Test data
+
+        Returns
+        -------
+        np.ndarray
+            Predicted response
+        """
+
+        f =  self.f_predict(X_test)
+    
+        if R_12 is not None:
+            f = self.conditional_latent(f, self.f_curr, self.y, R_12)
+
+        return f
+
+    def conditional_latent(self, f_z, f_n, y, R_12):
+        f_z += R_12 @ self.R_inv @ (y - f_n)
+        return f_z
+    
+    def score(self, X_test, y_test, metric='rmse', R_12 = None):
         """
         The parameters already account for error correlation
         and the errors are assumed to be independent
@@ -564,6 +653,9 @@ class KRGEE:
             metric to use, by default 'rmse' and 'r2' for continuous
             targets and 'loss' for binary targets.
 
+        R_12 : np.ndarray, optional
+            Cross-correlation matrix between training and test data, by default None
+
         Returns
         -------
         float
@@ -574,7 +666,7 @@ class KRGEE:
         
         # predict function is defined 
         # in the subclass
-        y_pred = self.predict(X_test, vcv_test)
+        y_pred = self.predict(X_test, R_12)
 
         if metric == 'rmse':
             return np.sqrt(np.mean((y_pred - y_test) ** 2))
@@ -596,7 +688,7 @@ class Logistic(KRGEE):
     def __init__(self,
                  kernel='rbf',
                  max_iter=300, 
-                 lam=0.1,
+                 lam=None,
                  warm_start = False,
                  tol = 0.001,
                  seed = 12038,
@@ -604,12 +696,13 @@ class Logistic(KRGEE):
                  get_corr = True,
                  copy_R_inv = False,
                  copy_K_train = False,
-                 copy_dofp = False, # phylogenetic degrees of freedom
-                 fix_phi = False
+                 fix_phi = False,
+                 add_extraK = False
                  ) -> None:
         
         super().__init__(kernel, max_iter, lam, warm_start, tol, seed, 
-                         verbose, get_corr, copy_R_inv, copy_K_train, copy_dofp, fix_phi)
+                         verbose, get_corr, copy_R_inv, copy_K_train, fix_phi,
+                         add_extraK=add_extraK)
         
         self.grad_tol = 1e-15
         self.hessian_tol = 1e-12
@@ -623,8 +716,6 @@ class Logistic(KRGEE):
         f_tresh = 30
         f = np.clip(f, -f_tresh, f_tresh)
         mu =  1/(1 + np.exp(-f))
-        # mu[mu < self.grad_tol] = self.grad_tol
-        # mu[mu > 1 - self.grad_tol] = 1 - self.grad_tol
         return mu
     
     def get_Du_mu_internal(self, x):
@@ -633,8 +724,6 @@ class Logistic(KRGEE):
         from the current function values using the logistic function
         """
         p1_out = self.mu(x)
-        # assert np.all(p1_out > self.grad_tol) or np.all(p1_out < 1 - self.grad_tol) or np.all(p1_out != np.nan), "Diverging probabilities"
-        # p1_out = np.clip(p1_out, self.grad_tol, 1 - self.grad_tol)
 
         # p1 * p0, derivative of mu estimator
         self.Du = p1_out * (1 - p1_out)
@@ -647,15 +736,22 @@ class Logistic(KRGEE):
         """
         return self.Du
     
+    def conditional_latent(self, f_z, f_n, y, R_12):
+        y_c = np.clip(y, self.hessian_tol, 1 - self.hessian_tol)
+        # y_c = np.clip(y, 1e-3, 1 - 1e-3)
+        sig_inv_y = np.log(y_c/(1 - y_c))
+        e = sig_inv_y - f_n
+        bias = R_12 @ self.R_inv @ e
+        # print(f"e: {e[:5]}")
+        # print(f"bias: {bias[:5]}")
+        f_z += bias
+        return f_z
+    
     def predict_proba(self, X_test, R_12=None):
         f = self.f_predict(X_test)
 
-        # mu_1 = self.mu(f)
         if R_12 is not None:
-            y_c = np.clip(self.y, self.hessian_tol, 1 - self.hessian_tol)
-            sig_inv_y = np.log(y_c/(1 - y_c))
-
-            f += R_12 @ self.R_inv @ (sig_inv_y - self.f_curr)
+            f = self.conditional_latent(f, self.f_curr, self.y, R_12)
 
         return self.mu(f)
     
@@ -680,7 +776,7 @@ class Logistic(KRGEE):
         mu = self.predict_proba(X_test, R_12)
         return (mu >= 0.5).astype(float)
     
-    def score(self, X_test, y_test, vcv_test = None, metric = 'log_loss', eps = 1e-3):
+    def score(self, X_test, y_test, R_12 = None, metric = 'log_loss', eps = 1e-3):
         """
         Score the model using the specified metric.
         Parameters
@@ -689,7 +785,7 @@ class Logistic(KRGEE):
             test data
         y_test : np.ndarray
             true labels
-        vcv_test : np.ndarray, optional
+        R_12 : np.ndarray, optional
             correlation matrix, by default None
         metric : str, optional
             evaluation metric, by default 'log_loss'
@@ -703,11 +799,11 @@ class Logistic(KRGEE):
         """
 
         if metric == 'loss':
-            y_pred = self.predict(X_test, vcv_test)
+            y_pred = self.predict(X_test, R_12)
             return np.mean(y_pred != y_test)
         
         elif metric == 'log_loss':
-            y_pred_prob = self.predict_proba(X_test, vcv_test)
+            y_pred_prob = self.predict_proba(X_test, R_12)
             y_pred_prob = np.clip(y_pred_prob, eps, 1 - eps)
 
             log_losses = -( y_test*np.log(y_pred_prob) + (1 - y_test)*np.log(1 - y_pred_prob) )
@@ -747,26 +843,7 @@ class Poisson(KRGEE):
         f =  self.f_predict(X_test)
         return self.mu(f)
     
-class Normal(KRGEE):
-    def __init__(self, kernel='rbf', max_iter=300, lam=0.1, warm_start=False, tol=0.001, seed=12038, verbose=False):
-        super().__init__(kernel, max_iter, lam, warm_start, tol, seed, verbose)
-
-    def mu(self, f):
-        return f
-    
-    def get_Du_mu_internal(self, x):
-        """
-        Get mu vector (estimator) and D_u matrix with mu derivatives
-        from the current function values using the logistic function
-        """
-        return np.ones_like(x), x
-    
-    def get_Vu_func(self, f_curr):
-        """
-        Get the variance of the estimator mu
-        """
-        return 1
-    
+ 
 class Gamma(KRGEE):
     def __init__(self, kernel='rbf', max_iter=300, lam=0.1, 
                  warm_start=False, tol=0.001, seed=12038, 
@@ -800,34 +877,69 @@ class Gamma(KRGEE):
         f =  self.f_predict(X_test)
         return self.mu(f)
     
-class InverseGaussian(KRGEE):
-    def __init__(self, kernel='rbf', max_iter=300, lam=0.1,
-                  warm_start=False, tol=0.001, seed=12038, verbose=False,
-                  dispersion=1):
-        super().__init__(kernel, max_iter, lam, warm_start, tol, seed, verbose)
-        
-        self.get_Du_mu = self.get_Du_mu_internal
-        self.get_Vu = self.get_Vu_func
-        self.Du = np.array([])
-        self.dispersion = dispersion
-
-    def mu(self, f):
-        return f**(-1/2)
-    
-    def get_Du_mu_internal(self, x):
-        """
-        Get mu vector (estimator) and D_u matrix with mu derivatives
-        from the current function values using the logistic function
-        """
-        mu = self.mu(x)
-        self.Du = (-1/2) * mu**3
-        return self.Du, mu
-    
-    def get_Vu_func(self, f_curr):
-        """
-        Get the variance of the estimator mu
-        """
-        return (-2)*self.Du*self.dispersion
 
 #endregion experimental work yet to be verified
 
+
+# region: old code
+
+
+# def get_DFP(spps_train, vcv):
+#     """
+#     Get degrees of freedom sensu Paradis
+#     Params
+#     ------
+#     tree: nodes, root
+#     T_spps_i: list of species index in nodes
+#     vcv: vcv of the species
+#     """
+
+#     n1 = spps_train[0]
+#     # O(n), find the root
+#     while n1.ancestor:
+#         n1 = n1.ancestor
+#     root = n1
+
+#     vn = set()
+#     bls = 0
+#     for n in spps_train:
+#         bls += n.branch_length
+#         tmp_anc = n.ancestor
+#         while (tmp_anc not in vn) and (tmp_anc != root):
+#             vn.add(tmp_anc)
+#             tmp_anc = tmp_anc.ancestor
+
+#     for i in vn:
+#         bls += i.branch_length
+
+#     return (bls * vcv.shape[0])/np.sum(np.diag(vcv))
+
+
+    # def get_V_sqInv(self, f_curr):
+    #     """
+    #     Get the square root of the inverse of the V matrix
+    #     V = A^1/2 R A^1/2 \phi
+    #     A = variance of \mu
+    #     R = correlation matrix
+    #     phi = dispersion parameter
+
+    #     V^(-1/2) = ( A^1/2  R      A^1/2  \phi)^-1/2
+    #              =   A^-1/4 R^-1/2 A^-1/4 \phi^-1/2 
+
+    #     O(n^2) complexity
+
+    #     Parameters
+    #     ----------
+    #     f_curr : np.ndarray
+    #         current function values
+    #     Returns
+    #     -------
+    #     np.ndarray
+    #         V^(-1/2)
+    #     """
+    #     A_qInv = self.Vu_func(f_curr)**(-1/4)
+    #     V_sqInv  = (A_qInv[:, None] * self.L_inv) * A_qInv
+    #     V_sqInv *= (self.phi)**(-1/2) # O(n^2)
+    #     return V_sqInv
+
+#endregion
