@@ -82,14 +82,6 @@ def alpha_weighting(tree, alpha=1/4):
         S.append((pa.right, pr * p))
 
     return A
-    # probs = []
-    # leaves = []
-    # for k,v in A.items():
-    #     if is_leaf(k):
-    #         leaves.append(k.name)
-    #         probs.append(v)
-
-    # return np.asarray(leaves), np.asarray(probs)
 
 def sample_mChoice(P, rng, Fz):
     """
@@ -185,7 +177,6 @@ def weighted_sample(P, rng, folds=5): # type: ignore
 
 # # # # # myfolds
 # with open("folds.txt", 'w') as f:
-# # with open("folds_Boyko.txt", 'w') as f:
 # # with open("folds_random.txt", 'w') as f:
 #     for train_idx_f, test_idx_f in myfolds:
 

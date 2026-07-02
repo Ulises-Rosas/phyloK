@@ -4,7 +4,8 @@ import time
 
 import numpy as np
 from phylokrr.kernels import linear_kernel
-from scipy import linalg as la
+# from scipy import linalg as la
+from numpy import linalg as la
 
 def distance_matrix(a, b):
     """
