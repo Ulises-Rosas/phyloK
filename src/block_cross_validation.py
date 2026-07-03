@@ -79,7 +79,7 @@ def pick_init_index(P_index, P_r, seed):
     return init_idx
 
 def init_model(X_train, y_train, vcv_train, model, 
-                    param_init, i):
+                    param_init, verbose = False):
     """
     Initialize the model.
     This initialization of the model is used at the beginning of every
@@ -111,7 +111,8 @@ def init_model(X_train, y_train, vcv_train, model,
     time_start = time.time()
     model.fit(X_train, y_train, vcv_train)
     time_end = time.time()
-    print(f"Initial model fit time: {time_end - time_start:.2f} seconds")
+    if verbose:
+        print(f"Initial model fit time: {time_end - time_start:.2f} seconds")
 
     # for the next iteration alpha is used
     model.warm_start = False
@@ -168,7 +169,8 @@ def k_fold_cv_weigthed(X, y, vcv, model, W,
 
     # O(n^3*folds*sample)
     for i, (train_idx, test_idx) in enumerate(myfolds):
-        print("Fold: ", i)
+        if verbose:
+            print("Fold: ", i)
         # print(test_idx)
         X_train, X_test = X[train_idx, :], X[test_idx, :]
         y_train, y_test = y[train_idx], y[test_idx]
@@ -198,7 +200,7 @@ def k_fold_cv_weigthed(X, y, vcv, model, W,
         # specified hyperparameter. This initial alpha is
         # used for all the folds
         init_model(X_train, y_train, vcv_train,
-                   model, param_init, i)
+                   model, param_init, verbose = verbose)
         
         # init_err1 = model.score(X_test, y_test, vcv_test_12)*len(y_test)
         # init_err2 = model.score(X_test, y_test, None)*len(y_test)
@@ -208,8 +210,9 @@ def k_fold_cv_weigthed(X, y, vcv, model, W,
 
         all_errors.append([init_idx, init_err])
 
+        pb = progressbar(P_r, prefix = "Evaluating hyperparameters: ", size=40) if verbose else P_r
         j = 0
-        for p_j in progressbar(P_r, prefix = "Testing hyperparameters: ", size=60):
+        for p_j in pb:
             
             if j == init_idx:
                 continue
