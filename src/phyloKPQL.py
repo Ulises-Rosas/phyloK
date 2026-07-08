@@ -507,8 +507,13 @@ class KRGEE:
                 conv = True
                 break
 
-            self.alpha -= np.linalg.solve( H, G ) # O(n^3)
+            try:
+                self.alpha -= np.linalg.solve( H, G ) # O(n^3)
 
+            except np.linalg.LinAlgError:
+                print("Linear algebra error occurred at solve. Adding hessian_tol to the diagonal of H and trying again.")
+                self.alpha -= np.linalg.solve( H + self.hessian_tol * np.eye(H.shape[0]), G ) # O(n^3)
+    
             # new optimal function val
             f_new = K_a @ self.alpha
             if self.check_convergence(f_new, f_curr) and i > 1:
