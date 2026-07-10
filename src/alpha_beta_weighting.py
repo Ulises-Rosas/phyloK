@@ -35,7 +35,22 @@ def tree_postorder(root):
     return L
 
 # tree = "((4,5),(6,7));"
-def alpha_weighting(tree, alpha=1/4):
+def clipA(A: dict, tol = 1e-8):
+    """
+    Clip the values of A to be at least tol. 
+    """
+    suma = 0
+    for k in A.keys():
+        if A[k] < tol:
+            A[k] = tol
+        suma += A[k]
+
+    for k in A.keys():
+        A[k] /= suma
+
+    return A
+
+def alpha_weighting(tree, alpha=1/4, tol = 1e-8):
     """
     Weight the leaves of a phylogenetic tree based on 
     on the number of decendents using an alpha parameter. 
@@ -81,6 +96,7 @@ def alpha_weighting(tree, alpha=1/4):
         S.append((pa.left, pl * p))
         S.append((pa.right, pr * p))
 
+    clipA(A, tol)
     return A
 
 def sample_mChoice(P, rng, Fz):
