@@ -6,6 +6,7 @@ import numpy as np
 from phylokrr.kernels import linear_kernel
 # from scipy import linalg as la
 from numpy import linalg as la
+# from numba import njit, float64, int64
 
 def distance_matrix(a, b):
     """
@@ -17,7 +18,9 @@ def distance_matrix(a, b):
 def RBF_kernel(a, b, gamma, extra_K = None):
     """
     Radial Basis Function
-    """        
+    """ 
+    a = np.ascontiguousarray(a, dtype=np.float64)
+    b = np.ascontiguousarray(b, dtype=np.float64)
     # data sim
     tmp_rbf = -gamma * distance_matrix(a, b)
 
@@ -51,6 +54,8 @@ class KRGEE:
                  fix_phi = False,
                  add_extraK= False
                  ) -> None:
+
+        assert max_iter >= 1, "number of iterations should be a least 1" 
         
         self.add_extraK = add_extraK
         
@@ -95,7 +100,7 @@ class KRGEE:
 
         self.phi = 1
         self.fix_phi = fix_phi
-        self.r = np.array([])
+        self.r = np.array([]) # residuals
         self.rho = np.array([])
         self.dof = 1 # degrees of freedom
         self.L_inv = np.array([]) # R^-1/2
@@ -455,11 +460,9 @@ class KRGEE:
             K_0 = np.zeros((n + 1, p + 1), dtype=K_dtype)
             K_0[1:, 1:] = K
             lK_0 = self.lam * K_0
-            lK = self.lam * K
 
         else:
             lK_0 = np.array([[0]], dtype=K_dtype)
-            lK = np.array([[0]], dtype=K_dtype)
 
 
         # concatenate ones to K for intercept
@@ -532,7 +535,8 @@ class KRGEE:
             if not self.fix_phi:
                 if p > 0:
                     #  hessian of the penalized coefficients (alpha without intercept)
-                    HA = ((1/n)*(DuDaT_V_DuDa[1:, 1:])) + lK # O(n^2)
+                    HA = H[1:,1:]
+                    # HA = ((1/n)*(DuDaT_V_DuDa[1:, 1:])) + lK # O(n^2)
                     # UHA = (DuDaT_V_DuDa[1:, 1:] + lK) # O(n^2)
                     self.set_df(HA) # O(n^3)
                 else:
@@ -550,6 +554,174 @@ class KRGEE:
             print("gamma, phi, lam:")
             print(self.gamma, self.phi, self.lam)
 
+    def krgee_fit_v2(self, K, y):
+        
+        n = y.shape[0]
+        p = K.shape[1] if K is not None else 0
+        K_dtype = K.dtype if K is not None else float
+
+        ones = np.ones(n, dtype=K_dtype)
+        
+        if p > 0:
+            K_0 = np.zeros((n + 1, p + 1), dtype=K_dtype)
+            K_0[1:, 1:] = K
+            lK_0 = self.lam * K_0
+
+        else:
+            lK_0 = np.array([[0]], dtype=K_dtype)
+
+
+        # concatenate ones to K for intercept
+        K_a = np.column_stack((ones, K)) if p > 0 else ones.reshape(-1, 1)
+        K_a = np.asfortranarray(K_a, dtype=K_dtype)
+
+        if not self.warm_start or np.any(np.isnan(self.alpha)):
+            # np.random.seed(self.seed)
+            # self.alpha = np.random.normal(size=p + 1)*np.sqrt(1./n) # alpha weights
+            self.alpha = np.zeros(p + 1) # alpha weights
+            self.alpha = np.ascontiguousarray(self.alpha, dtype=K_dtype)
+            self.phi = 1
+
+        assert len(self.alpha) > 0, "The model needs to be fitted first"
+    
+        f_curr = K_a @ self.alpha
+        conv = False
+        for i in range(self.max_iter):
+            # get derivatives of \mu and \mu
+            
+            Du, u = self.get_Du(f_curr)
+            V_Inv = self.get_V_Inv(f_curr) # O(n^2)
+    
+            DuDa = Du[:,None] * K_a # O(n^2)
+            DuDaT_V = np.matmul(DuDa.T, V_Inv) # O(n^3)
+            DuDaT_V_DuDa = np.matmul(DuDaT_V, DuDa) # O(n^3)
+
+            H = ((1/n)*(DuDaT_V_DuDa)) + lK_0 # O(n^2)
+            e = y - u # O(n)
+
+            # gradient
+            G =  ((-1/n)*(DuDaT_V @ e)) + lK_0 @ self.alpha # O(n^2)
+
+
+            try:
+                d = - np.linalg.solve( H, G ) # O(n^3)
+
+            except np.linalg.LinAlgError:
+                print("Linear algebra error occurred at solve. Adding hessian_tol to the diagonal of H and trying again.")
+                d =  - np.linalg.solve( H + self.hessian_tol * np.eye(H.shape[0]), G ) # O(n^3)
+
+            g_d = G.T @ d
+            lam_sq = -g_d
+            
+            step = self.backtracking_line_search(y, self.alpha, K_a, d, g_d)
+            self.alpha += (step*d)
+            
+            # self.alpha += d
+    
+            # new optimal function val
+            f_new = K_a @ self.alpha
+            if self.check_convergence(f_new, f_curr, 
+                                      g_norm = np.linalg.norm(G, ord=2)**2, 
+                                      lam2 = lam_sq, 
+                                      i = i):
+                conv = True
+                f_curr = f_new
+                break
+
+            f_curr = f_new
+
+            if self._verbose:
+                print("Iteration: ", i)
+                print('phi: ', self.phi)
+                print('fix_phi: ', self.fix_phi)
+                print()
+        
+            if not self.fix_phi:
+                if p > 0:
+                    #  hessian of the penalized coefficients (alpha without intercept)
+                    HA = H[1:,1:]
+                    # HA = ((1/n)*(DuDaT_V_DuDa[1:, 1:])) + lK # O(n^2)
+                    # UHA = (DuDaT_V_DuDa[1:, 1:] + lK) # O(n^2)
+                    self.set_df(HA) # O(n^3)
+                else:
+                    self.dof = n - 1
+                
+                self.set_phi(e)
+
+        self.f_curr = f_curr
+        self.y = y.copy()
+
+        if not conv:
+            print("No convergence after %i iterations" % self.max_iter)
+            print("gamma, phi, lam:")
+            print(self.gamma, self.phi, self.lam)
+
+    def mu(self, f):
+        return f
+
+    def Q(self, y, u):
+        return (1/self.phi) * -0.5 * (y - u)**2
+
+    def Obj(self, y, f, p):
+
+        u = self.mu(f)
+        return - np.mean(self.Q(y, u)) + p
+
+    def backtracking_line_search(self, 
+                                 y   , 
+                                 w_a , 
+                                 K_a , 
+                                 d   , 
+                                 g_d,
+                                #  beta=0.01, 
+                                 beta=1e-4, 
+                                 p=0.5):
+        """
+        Also known as the Armijo's rule: It makes to satisfy 
+        the first Wolfe condition. It is a sufficient decrease condition.
+        """
+
+        f_w_a = K_a @ w_a
+        k_ad = K_a @ d
+
+        b = w_a[0] # unpenalized weights 
+        d_b, d_w = d[0],d[1:] # separate the unpenalized and penalized weights
+
+        # l/2 * (w_a + t*d)^T K_0 (w_a + t*d)
+        #  = l/2 * (w + t*d_w)^T K (w + t*d_w)
+        #  = l/2 * (  t^2 * d_w.T K d_w + 2t w.T K d_w + w.T K w )
+        #  = l/2 * (  t^2 * c1 + 2t * c2  + c3)  
+        #  PEnalized term
+
+        # c1 = d_w.T (K_a d - d_b)
+        #    = d_w.T (d_b + K d_w - d_b)
+        #    = d_w.T K d_w
+        c1 = d_w.T @ (k_ad - d_b)
+
+        # c2 = d_w.T (K_a w_a - b)
+        #    = d_w.T (b + K w - b)  
+        #    = d_w.T K w
+        c2 = d_w.T @ (f_w_a - b) # d_w.T ( 1b + Kw - 1b)
+
+
+        # since w.T K w is present on both sides of the inequality, 
+        # it can be removed from the backtracking line search condition
+        # this makes two changes:
+        # 1. the PE term is now only the cross term and the quadratic term
+        # 2. the obj term is now only the Q term
+        
+        PE = lambda x: (c1*(x**2) + 2*c2*x)*(self.lam/2)
+        obj = self.Obj(y, f_w_a, 0)
+
+        f_w_td = lambda x: f_w_a + x*k_ad
+
+        t = 10
+        # t = 1
+        while self.Obj(y, f_w_td(t), PE(t)) > obj + (t * beta * g_d):
+            # print(t)
+            t *= p
+        return t
+
     def fit(self, X, y, vcv = None):
         """
         Fit the model
@@ -558,9 +730,10 @@ class KRGEE:
         self.set_R_inv(vcv) # it returns identity matrix if vcv is None
         self.set_K_train(self.X)
 
-        self.krgee_fit(self.K_train, y)
+        # self.krgee_fit(self.K_train, y)
+        self.krgee_fit_v2(self.K_train, y)
 
-    def check_convergence(self, f_new, f_curr):
+    def check_convergence(self, f_new, f_curr, g_norm = 1, lam2 = 1, i = 1):
         """
         Check convergence of the algorithm
 
@@ -570,12 +743,31 @@ class KRGEE:
 
         return: True if converged, False otherwise
         """
+        if i == 0:
+            return False
+
+        # self.verbose = True
+
+        if lam2/2 <= self.tol:
+            if self.verbose:
+                print(f"Lambda squared is below the tolerance threshold (iter. {i})")
+            return True
+
+                
         max_updt = np.linalg.norm(f_new - f_curr, ord = np.inf)
         w_max    = np.linalg.norm(f_new, ord = np.inf)
 
         if w_max == 0 or max_updt/w_max < self.tol:
+            if self.verbose:
+                print(f"f update is below the tolerance threshold (iter. {i})")
             return True
-        
+
+        if g_norm <= self.grad_tol:
+            if self.verbose:
+                print(f"Gradient norm is below the clipping threshold (iter. {i})")
+            return True
+
+
         return False
 
     def f_predict(self, X_test):
@@ -757,6 +949,13 @@ class Logistic(KRGEE):
         """
         mu = self.predict_proba(X_test, R_12)
         return (mu >= 0.5).astype(float)
+
+    def Q(self, y, u, eps=1e-12):
+        """
+        Get the quasi-likelihood function for the logistic model
+        """
+        u = np.clip(u, eps, 1 - eps)
+        return (1/self.phi) * (y * np.log(u) + (1 - y) * np.log(1 - u))
     
     def score(self, X_test, y_test, R_12 = None, metric = 'log_loss', eps = 1e-3):
         """
@@ -786,9 +985,10 @@ class Logistic(KRGEE):
         
         elif metric == 'log_loss':
             y_pred_prob = self.predict_proba(X_test, R_12)
-            y_pred_prob = np.clip(y_pred_prob, eps, 1 - eps)
+            # y_pred_prob = np.clip(y_pred_prob, eps, 1 - eps)
+            # log_losses = -( y_test*np.log(y_pred_prob) + (1 - y_test)*np.log(1 - y_pred_prob) )
 
-            log_losses = -( y_test*np.log(y_pred_prob) + (1 - y_test)*np.log(1 - y_pred_prob) )
+            log_losses = - self.Q(y_test, y_pred_prob, eps=eps)
             return np.mean( log_losses )
     
         else:
