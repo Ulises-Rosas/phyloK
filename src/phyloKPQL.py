@@ -118,7 +118,7 @@ class KRGEE:
         return f"KRGEE(kernel={self.kernel}, max_iter={self.max_iter}, lam={self.lam}, warm_start={self.warm_start}, tol={self.tol}, seed={self.seed})"
     
     
-    def center_kernel(self, K, trainxtest = False):
+    def center_kernel(self, K, trainxtest = False, save_means = True):
         """
         Center the kernel matrix
 
@@ -135,12 +135,26 @@ class KRGEE:
 
         Here is a general attempt for non-square matrices
         """
+        if K is None:
+            n = self.X.shape[0]
+            return np.zeros((n,n))
+
         K_row_mean = np.mean(K, axis = 1)
+
+        if not (save_means or trainxtest):
+            K_col_mean = np.mean(K, axis = 0)
+            K_all_mean = np.mean(K)
+
+            K -= K_col_mean
+            K -= K_row_mean.reshape(-1,1)
+            K += K_all_mean
+            return K
 
         if not trainxtest:
             self.K_col_mean = np.mean(K, axis = 0)
             self.K_all_mean = np.mean(K)
 
+        assert len(self.K_col_mean) > 0, 'col means from traning data missing'
         K -= self.K_col_mean
         K -= K_row_mean.reshape(-1,1)
         K += self.K_all_mean
@@ -148,7 +162,6 @@ class KRGEE:
 
     def set_params(self, **params):
         """
-        Set parameters for the ISLEPath instance.
         """
         for key, value in params.items():
             if hasattr(self, key):
@@ -159,10 +172,10 @@ class KRGEE:
     def get_params(self):
         return  {'max_iter': self.max_iter, 
                 'lam': self.lam, 
-                'intercept': self.b, 
+                'intercept': self.alpha[0] if len(self.alpha) > 0 else None, 
                 'tol': self.tol}
 
-    def get_K(self, A, B, trainxtest=False):
+    def get_K(self, A, B, R = None, trainxtest=False, center = True):
         """
         Get the kernel matrix
         depending on the kernel type specified
@@ -183,12 +196,12 @@ class KRGEE:
         """
         if self.kernel == 'rbf':
 
-            if self.add_extraK:
-                R = self.Rzn if trainxtest else self.Rnn
-            else:
-                R = None
+            # if self.add_extraK:
+            #     R = self.Rzn if trainxtest else self.Rnn
+            # else:
+            #     R = None
 
-            K = RBF_kernel(A, B, self.gamma, extra_K=R)
+            K = RBF_kernel(A, B, self.gamma)
 
         elif self.kernel == 'linear':
             K =  linear_kernel(A, B, self.c)
@@ -196,7 +209,44 @@ class KRGEE:
         else:
             K =  A
 
-        return self.center_kernel(K, trainxtest)
+        if R is not None:
+            K += R
+
+        return self.center_kernel(K, trainxtest) if center else K
+
+    def get_K2(self, A, B, R = None, trainxtest=False, center = True):
+        """
+        Get the kernel matrix
+        depending on the kernel type specified
+        a parameter is passed to the kernel function
+        Otherwise, the input matrix A is returned
+
+        Parameters
+        ----------
+        A : np.ndarray
+            input matrix
+        B : np.ndarray
+            input matrix
+
+        Returns
+        -------
+        np.ndarray
+            kernel
+        """
+        if self.kernel == 'rbf':
+
+            K = RBF_kernel(A, B, self.gamma)
+
+        elif self.kernel == 'linear':
+            K =  linear_kernel(A, B, self.c)
+
+        else:
+            K =  A
+
+        if R is not None:
+            K += R
+
+        return self.center_kernel(K, trainxtest) if center else K        
         
     def pre_process_V(self, V):
         """
@@ -329,7 +379,8 @@ class KRGEE:
             pass
 
         else:
-            self.K_train = np.asfortranarray( self.get_K(X, X), dtype=float)
+            Kc = self.get_K(X, X, R = self.Rnn)
+            self.K_train = np.asfortranarray(Kc, dtype=float)
 
 
     def get_Du(self, f_curr):
@@ -554,7 +605,7 @@ class KRGEE:
             print("gamma, phi, lam:")
             print(self.gamma, self.phi, self.lam)
 
-    def krgee_fit_v2(self, K, y):
+    def opt_weights(self, K, y):
         
         n = y.shape[0]
         p = K.shape[1] if K is not None else 0
@@ -722,7 +773,7 @@ class KRGEE:
             t *= p
         return t
 
-    def fit(self, X, y, vcv = None):
+    def fit0(self, X, y, vcv = None):
         """
         Fit the model
         """
@@ -731,7 +782,43 @@ class KRGEE:
         self.set_K_train(self.X)
 
         # self.krgee_fit(self.K_train, y)
-        self.krgee_fit_v2(self.K_train, y)
+        self.opt_weights(self.K_train, y)
+
+    def fit(self, X, y, vcv = None, process = 'BM'):
+        """
+        Fit the model
+        """
+        self.X = X # store the training data for prediction
+
+        if self.add_extraK:
+            self.set_R_inv(None) # it returns identity matrix if vcv is None
+
+            self.Rnn = vcv
+            self.set_K_train(self.X)
+            self.opt_weights(self.K_train, y)
+        else:
+            # V is either identity or dense
+            self.set_R_inv(vcv) # it returns identity matrix if vcv is None
+            self.set_K_train(self.X)
+            self.opt_weights(self.K_train, y)
+
+
+        # self.X = X # store the training data for prediction
+        # self.set_R_inv(vcv) # it returns identity matrix if vcv is None
+        # K_x_uc = self.get_K2(X, X, center = False)
+        # K_uc = K_x_uc + self.Rnn if self.Rnn is not None else K_x_uc
+        # self.K_train = self.center_kernel(K_uc)
+        # self.opt_weights(self.K_train, y)
+
+
+        # sumaK = K_x_uc + vcv if vcv is not None else K_x_uc
+        # self.K_col_mean = np.mean(sumaK, axis = 0)
+        # self.K_all_mean = np.mean(sumaK)
+
+        # if process == 'BM':
+        #     return
+
+        # self.opt_evoparam()
 
     def check_convergence(self, f_new, f_curr, g_norm = 1, lam2 = 1, i = 1):
         """
@@ -770,19 +857,30 @@ class KRGEE:
 
         return False
 
-    def f_predict(self, X_test):
+    def f_predict(self, X_test, Rzn = None):
         assert len(self.alpha) > 0, "The model needs to be fitted first"
         assert X_test is not None, "X_test should not be None"
 
         if self.K_train is None:
             f = self.alpha[0] * np.ones(X_test.shape[0])
 
-        else:            
-            K_test = self.get_K(X_test, self.X, trainxtest = True)
-            b, alpha = self.alpha[0], self.alpha[1:]
-            f =  K_test @ alpha + b
+        else:
 
-        return f
+            if Rzn is None:
+                K_test = self.get_K(X_test, self.X, R = None, trainxtest = True)
+                b, alpha = self.alpha[0], self.alpha[1:]
+                return  K_test @ alpha + b
+
+            if self.add_extraK:
+                K_test = self.get_K(X_test, self.X, R = Rzn, trainxtest = True)
+                b, alpha = self.alpha[0], self.alpha[1:]
+                return  K_test @ alpha + b
+
+            else:
+                K_test = self.get_K(X_test, self.X, R = None, trainxtest = True)
+                b, alpha = self.alpha[0], self.alpha[1:]
+                f =  K_test @ alpha + b
+                return self.conditional_latent(f, self.f_curr, self.y, Rzn)
     
     def predict(self, X_test, R_12 = None):
         """
@@ -798,13 +896,7 @@ class KRGEE:
         np.ndarray
             Predicted response
         """
-
-        f =  self.f_predict(X_test)
-    
-        if R_12 is not None:
-            f = self.conditional_latent(f, self.f_curr, self.y, R_12)
-
-        return f
+        return self.f_predict(X_test, R_12)
 
     def conditional_latent(self, f_z, f_n, y, R_12):
         f_z += R_12 @ self.R_inv @ (y - f_n)
@@ -922,11 +1014,7 @@ class Logistic(KRGEE):
         return f_z
     
     def predict_proba(self, X_test, R_12=None):
-        f = self.f_predict(X_test)
-
-        if R_12 is not None:
-            f = self.conditional_latent(f, self.f_curr, self.y, R_12)
-
+        f = self.f_predict(X_test, R_12)
         return self.mu(f)
     
     def predict(self, X_test, R_12=None):

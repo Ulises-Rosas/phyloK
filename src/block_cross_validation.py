@@ -1,4 +1,3 @@
-import sys
 import time
 from collections import deque
 
@@ -179,11 +178,7 @@ def k_fold_cv_weigthed(X, y, vcv, model, W,
         vcv_train = None
         vcv_test_12 = None
 
-        if is_vcv and model.add_extraK:
-            model.Rnn = vcv[train_idx,:][:,train_idx]
-            model.Rzn = vcv[test_idx,:][:,train_idx]
-
-        elif is_vcv and not model.add_extraK:
+        if is_vcv:
             vcv_train = vcv[train_idx,:][:,train_idx]
             vcv_test_12 = vcv[test_idx,:][:,train_idx]
 
@@ -206,7 +201,11 @@ def k_fold_cv_weigthed(X, y, vcv, model, W,
         # init_err2 = model.score(X_test, y_test, None)*len(y_test)
         # init_err = max(init_err1, init_err2)
 
-        init_err = model.score(X_test, y_test, None)*len(y_test)
+        if model.add_extraK and is_vcv:
+            init_err = model.score(X_test, y_test, vcv_test_12)*len(y_test)
+
+        else:
+            init_err = model.score(X_test, y_test, None)*len(y_test)
 
         all_errors.append([init_idx, init_err])
 
@@ -228,7 +227,10 @@ def k_fold_cv_weigthed(X, y, vcv, model, W,
             # tmp_err2 = model.score(X_test, y_test, None)*len(y_test)
             # tmp_err = max(tmp_err1, tmp_err2)
 
-            tmp_err = model.score(X_test, y_test, None)*len(y_test)
+            if model.add_extraK and is_vcv:
+                tmp_err = model.score(X_test, y_test, vcv_test_12)*len(y_test)
+            else:
+                tmp_err = model.score(X_test, y_test, None)*len(y_test)
 
             all_errors.append([j, tmp_err])
             j += 1
