@@ -876,7 +876,7 @@ class KRGEE:
                 else:
                     self.dof = n - 1
                 
-                self.set_phi(e)
+                self.set_phi(self.r)
 
         self.f_curr = f_curr
         self.y = y.copy()
