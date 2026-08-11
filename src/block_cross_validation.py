@@ -142,7 +142,8 @@ def k_fold_cv_weigthed(X, y, vcv, model, W,
                        folds = 3, 
                        sample = 100,
                        verbose = True,
-                       seed = 12038):
+                       seed = 12038,
+                       metric = 'log_loss'):
     """
     """
     
@@ -161,7 +162,7 @@ def k_fold_cv_weigthed(X, y, vcv, model, W,
     init_idx = pick_init_index(P_index, P_r, seed)
     param_init = dict(zip(P_n, P_r[init_idx,:]))
 
-    n, _ = X.shape
+    n = y.shape[0]
     # linked list to store all the errors
     all_errors = deque([])
     myfolds = weighted_sample(W, rng, folds=folds)
@@ -202,10 +203,10 @@ def k_fold_cv_weigthed(X, y, vcv, model, W,
         # init_err = max(init_err1, init_err2)
 
         if model.add_extraK and is_vcv:
-            init_err = model.score(X_test, y_test, vcv_test_12)*len(y_test)
+            init_err = model.score(X_test, y_test, vcv_test_12, metric = metric)*len(y_test)
 
         else:
-            init_err = model.score(X_test, y_test, None)*len(y_test)
+            init_err = model.score(X_test, y_test, None, metric =metric)*len(y_test)
 
         all_errors.append([init_idx, init_err])
 
@@ -228,9 +229,9 @@ def k_fold_cv_weigthed(X, y, vcv, model, W,
             # tmp_err = max(tmp_err1, tmp_err2)
 
             if model.add_extraK and is_vcv:
-                tmp_err = model.score(X_test, y_test, vcv_test_12)*len(y_test)
+                tmp_err = model.score(X_test, y_test, vcv_test_12, metric =metric)*len(y_test)
             else:
-                tmp_err = model.score(X_test, y_test, None)*len(y_test)
+                tmp_err = model.score(X_test, y_test, None, metric = metric)*len(y_test)
 
             all_errors.append([j, tmp_err])
             j += 1
