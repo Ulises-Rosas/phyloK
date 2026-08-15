@@ -67,7 +67,8 @@ def alpha_weighting(tree, alpha=1/4, tol = 1e-8):
     while L:
         v = L.pop()
         if is_leaf(v):
-            # using support to store
+            # using support attribute to store
+            # weights
             # v.branch_length = 1
             v.support = v.branch_length
             continue
