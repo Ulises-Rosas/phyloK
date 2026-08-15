@@ -79,7 +79,6 @@ def alpha_weighting(tree, alpha=1/4, tol = 1e-8):
 
     # alpha = 1/4
     A = {}
-    # S = [(root, math.log(1))]
     S = [(root, 1)]
     while S:
         pa,p = S.pop()
@@ -96,11 +95,10 @@ def alpha_weighting(tree, alpha=1/4, tol = 1e-8):
         
         pr = (nr/(nl+nr))**alpha
         pl = 1 - pr
-        # S.append((pa.left, math.log(pl) + p))
-        # S.append((pa.right, math.log(pr) + p))
+
         S.append((pa.left, pl * p))
         S.append((pa.right, pr * p))
-    print(A)
+    # print(A)
     clipA(A, tol)
     return A
 
