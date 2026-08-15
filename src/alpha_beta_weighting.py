@@ -67,12 +67,15 @@ def alpha_weighting(tree, alpha=1/4, tol = 1e-8):
     while L:
         v = L.pop()
         if is_leaf(v):
-            v.branch_length = 1
+            # using support to store
+            # v.branch_length = 1
+            v.support = v.branch_length
             continue
 
         l = v.left
         r = v.right
-        v.branch_length = l.branch_length + r.branch_length
+        # v.branch_length = l.branch_length + r.branch_length
+        v.support = l.support + r.support + v.branch_length
 
     # alpha = 1/4
     A = {}
@@ -86,8 +89,10 @@ def alpha_weighting(tree, alpha=1/4, tol = 1e-8):
             A[pa.name] = p
             continue
 
-        nl = pa.left.branch_length
-        nr = pa.right.branch_length
+        # nl = pa.left.branch_length
+        # nr = pa.right.branch_length
+        nl = pa.left.support
+        nr = pa.right.support        
         
         pr = (nr/(nl+nr))**alpha
         pl = 1 - pr
@@ -95,7 +100,7 @@ def alpha_weighting(tree, alpha=1/4, tol = 1e-8):
         # S.append((pa.right, math.log(pr) + p))
         S.append((pa.left, pl * p))
         S.append((pa.right, pr * p))
-
+    print(A)
     clipA(A, tol)
     return A
 
