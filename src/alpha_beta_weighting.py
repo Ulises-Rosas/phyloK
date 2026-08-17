@@ -50,7 +50,8 @@ def clipA(A: dict, tol = 1e-8):
 
     return A
 
-def alpha_weighting(tree, alpha=1/4, tol = 1e-8):
+def alpha_weighting(tree, alpha=1/4, tol = 1e-8, 
+                    branch_length = False):
     """
     Weight the leaves of a phylogenetic tree based on 
     on the number of decendents using an alpha parameter. 
@@ -69,14 +70,19 @@ def alpha_weighting(tree, alpha=1/4, tol = 1e-8):
         if is_leaf(v):
             # using support attribute to store
             # weights
-            # v.branch_length = 1
-            v.support = v.branch_length
+            if branch_length:
+                v.support = v.branch_length
+            else:
+                v.support = 1
+
             continue
 
         l = v.left
         r = v.right
-        # v.branch_length = l.branch_length + r.branch_length
-        v.support = l.support + r.support + v.branch_length
+        if branch_length:
+            v.support = l.branch_length + r.branch_length
+        else:
+            v.support = l.support + r.support + v.branch_length
 
     # alpha = 1/4
     A = {}
