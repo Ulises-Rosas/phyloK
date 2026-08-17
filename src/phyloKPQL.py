@@ -1,13 +1,13 @@
-import sys
-import time
-
-
 import numpy as np
-from phylokrr.kernels import linear_kernel
-# from scipy import linalg as la
 from numpy import linalg as la
 
-from phylokrr_dev.opt import newton_raphson_step, newton_raphson_step_rij, R_u, dR_u, backtracking_line_search_rij
+from phylokrr_dev.opt import (newton_raphson_step, R_u, 
+                              backtracking_line_search_rij)
+from phylokrr.kernels import linear_kernel
+# from phylokrr_dev.opt import *
+
+RED = "\033[31m"
+RESET = "\033[0m"
 
 def distance_matrix(a, b):
     """
@@ -109,12 +109,14 @@ class KRGEE:
         self.f_curr = np.array([]) # current function values
 
         self._verbose = False
-        self.grad_tol = 1e-10
+        self.grad_tol = 1e-40
         self.hessian_tol = 1e-10
         self.grad_clip = 2 # gradient clipping
 
-        self.grad_s = 0.0 # s 
+        self.grad_s = 0.0 # s for rmsprop
+        self.grad_dx = 0.0 # dx for rmsprop
         self.grad_eps = 1e-8
+        # self.lr = 1 # learning rate
         self.lr = 0.001 # learning rate
         self.beta = 0.9 # beta for rmsprop
 
@@ -270,6 +272,7 @@ class KRGEE:
         try:
             E,Q = la.eigh(R)
         except la.LinAlgError:
+            print("Linear algebra error occurred at eigh. Adding hessian_tol to the diagonal of R and trying again.")
             E,Q = la.eigh(R + np.eye(R.shape[0]) * self.hessian_tol)
 
         # E,Q = la.eigh(R)
@@ -580,7 +583,7 @@ class KRGEE:
         self.y = y.copy()
 
         if not conv:
-            print("No convergence after %i iterations" % self.max_iter)
+            print(f"{RED}No convergence after %i iterations {RESET}" % self.max_iter)
             print("gamma, phi, lam:")
             print(self.gamma, self.phi, self.lam)
 
@@ -598,138 +601,16 @@ class KRGEE:
         R = self.center_kernel(R_uc, save_means=False)
         return dR, R
 
-    def opt_rij_alpha(self, y, T, Kx, uc = 0.0):
+    def R_dR_ddR_uc(self, u, T):
         """
-
-        u used for phylogenetic correlation alpha = exp(-u), 
-        dont get confuse with u from best average estimator u = mu(f_curr)        
+        Get the correlation matrix, its first derivative and second derivative with respect to u
+        and the correlation matrix itself. All are uncentered.
         """
-
-        n = y.shape[0]
-        w = self.alpha[1:]
-
-        u_curr = uc
-        conv = False
-        for i in range(self.max_iter):
-            # get derivatives of \mu and \mu
-            dR, R = self.dR_R(u_curr, T)
-            # print("dR, R: ", dR, R)
-
-            f_curr = (Kx + R) @ w + self.alpha[0]
-            # print("f_curr:", f_curr)
-
-            Du, u = self.get_Du(f_curr)
-            V_Inv = self.get_V_Inv(f_curr) # O(n^2)
-    
-            DuDa =  (Du[:,None] * dR) @ w
-            DuDaT_V = np.matmul(DuDa.T, V_Inv) # O(n^3)
-            DuDaT_V_DuDa = np.matmul(DuDaT_V, DuDa) # O(n^3)
-
-            H = (1/n)*(DuDaT_V_DuDa) # Hessian is an scalar
-            # clip the hessian to avoid numerical issues
-            # if H == np.inf or H == 0:
-            #     print("dR: ", dR)
-            #     print('alpha: ', self.alpha)
-            #     print("R: ", R)
-            #     print("R_uc: ", np.exp(-np.exp(-u_curr) * T))
-            #     print("f_curr: ", f_curr)
-            #     print("Du: ", Du)
-            #     print("u: ", u)
-            #     print("V_Inv: ", V_Inv)
-            #     print("DuDa: ", DuDa)
-            #     print("DuDaT_V: ", DuDaT_V)
-            #     print("DuDaT_V_DuDa: ", DuDaT_V_DuDa)
-            #     raise ValueError("Hessian is zero or infinity. Check the input data and parameters.")
-    
-            H = np.clip(H, -self.grad_clip, self.grad_clip)
-
-
-
-            # print("Hessian from alpha param: ", H)
-
-            # gradient
-            g = -(1/n)*(DuDaT_V @ (y - u))
-            g = np.clip(g, -self.grad_clip, self.grad_clip)
-            # print("Gradient from alpha param: ", g)
-
-            u_new, lam_sq = newton_raphson_step_rij(y, H, g, f_curr,
-                                                    u_curr, T, Kx, 
-                                                    self.alpha, 
-                                                    self.hessian_tol, 
-                                                    dist = self.reg, 
-                                                    phi = self.phi)
-            # print("u_new, u_curr: ", u_new, u_curr)
-            u_new = np.clip(u_new, -4, 4)         
-            if self.check_convergence(u_new, u_curr, 
-                                    #   g_norm = np.linalg.norm(g, ord=2), 
-                                      g_norm = np.abs(g), 
-                                      lam2 = lam_sq, 
-                                      i = i):
-                conv = True
-                self.psc = u_new
-                break
-
-            u_curr = u_new
-
-        if not conv:
-            print("No convergence after %i iterations" % self.max_iter)
-            print(f"curr. phylo signal: {np.exp(-u_curr)}")
-
-        self.psc = u_curr
-
-    def opt_rij_gradient_descent(self, y, T, Kx, uc = 1):
-        """
-        Optimize the phylogenetic correlation parameter using gradient descent
-        """
-        n = y.shape[0]
-        w = self.alpha[1:]
-
-        u_curr = uc
-        conv = False
-        self.grad_s = 0.0
-        for i in range(self.max_iter):
-            dR, R = self.dR_R(u_curr, T)
-            f_curr = (Kx + R) @ w + self.alpha[0]
-
-            Du, u = self.get_Du(f_curr)
-            V_Inv = self.get_V_Inv(f_curr)
-
-            DuDa =  (Du[:,None] * dR) @ w
-            DuDaT_V = np.matmul(DuDa.T, V_Inv)
-
-            g = -(1/n)*(DuDaT_V @ (y - u))
-
-            # update u using a simple gradient descent step
-            # step_size = 0.001  # You may want to tune this parameter
-            # u_new = u_curr - step_size * g
-
-            # self.grad_s = self.beta*self.grad_s + (1 - self.beta)*g**2
-            # u_new = u_curr - (self.lr/np.sqrt(self.grad_s + self.grad_eps)) * g
-
-            u_new, lam_sq = newton_raphson_step_rij(y, 1, g, f_curr,
-                                                    u_curr, T, Kx,
-                                                    self.alpha,
-                                                    self.hessian_tol,
-                                                    dist=self.reg,
-                                                    phi=self.phi)
-
-            u_new = np.clip(u_new, -4, 4)  # Clip u_new to avoid extreme values
-            if self.check_convergence(u_new, u_curr, 
-                                      g_norm = np.abs(g), 
-                                      lam2 = lam_sq, 
-                                    #   lam2 = self.tol*2, 
-                                      i = i):
-                conv = True
-                self.psc = u_new
-                break
-
-            u_curr = u_new
-
-        if not conv:
-            print("No convergence after %i iterations" % self.max_iter)
-            print(f"curr. phylo signal: {np.exp(-u_curr)}")
-
-        self.psc = u_curr
+        alpha_u = np.exp(-u)
+        R_uc = np.exp( -alpha_u * T)
+        dR_uc = alpha_u * T * R_uc
+        ddR_uc = ( alpha_u * T  - np.ones(T.shape) ) * dR_uc
+        return R_uc, dR_uc, ddR_uc
 
     def opt_rij_gd_fullK(self, y, T, Kx, uc = 1):
         """
@@ -737,52 +618,73 @@ class KRGEE:
         """
         n = y.shape[0]
         w = self.alpha[1:]
+        bias = self.alpha[0]
 
-        u_curr = uc
-        self.grad_s = 0.0
+        def grad_Hessian_wrt_u(u_curr):
+            R_uc, dR_uc, ddR_uc = self.R_dR_ddR_uc(u_curr, T)
 
-        conv = False
-        for i in range(self.max_iter):
-            dR, R  = self.dR_R(u_curr, T)
-            f_curr = (Kx + R) @ w + self.alpha[0]
+            ddR = self.center_kernel(ddR_uc, save_means=False)
+            dR = self.center_kernel(dR_uc, save_means=False)
+            R = self.center_kernel(R_uc, save_means=False)
+                        
+            f_w = (Kx + R) @ w
+            f_curr = f_w + bias
 
             Du, u   = self.get_Du(f_curr)
             V_Inv   = self.get_V_Inv(f_curr)
             DuDa    = (Du[:,None] * dR) @ w
             DuDaT_V = np.matmul(DuDa.T, V_Inv)
 
-            reg_term = (self.lam/2) * (w.T @ dR @ w)
-            g = -(1/n)*(DuDaT_V @ (y - u)) + reg_term
-            # g = np.clip(g, -self.grad_clip, self.grad_clip)
+            dp1 = (self.lam/2.) * (w.T @ dR @ w)
+            dp2 = (self.lam/2.) * (w.T @ ddR @ w)
+            g = -(1/n)*(DuDaT_V @ (y - u)) + dp1
+            H  = (1/n)*(DuDaT_V @ DuDa) + dp2
 
-            # update u using gradient descent
-            # u_new = u_curr - self.lr * g
+            p = (self.lam/2.) * (w.T @ f_w)
+            obj = self.Obj(y, f_curr, p)
 
-            # adaptive gradient
-            # self.grad_s += g**2
-            # u_new = u_curr - (self.lr/np.sqrt(self.grad_s + self.grad_eps)) * g
+            return g, H, obj
 
-            # RMSprop
-            self.grad_s = self.beta*self.grad_s + (1 - self.beta)*g**2
-            u_new = u_curr - (self.lr/np.sqrt(self.grad_s + self.grad_eps)) * g
-    
-            # d = - g
-            # g_d = g * d
-            # lam_sq = -g_d
-            # step = backtracking_line_search_rij(
-            #     y, f_curr, self.alpha, u_curr, T, Kx, d, g_d, 
-            #     dist = self.reg, phi = self.phi,
-            #     reg_term=reg_term, lam=self.lam
-            # )
-            # u_new = u_curr + (step*d)
+        u_curr = uc
+        self.grad_s = 0.0
 
-            u_new = np.clip(u_new, -4, 4)  # Clip u_new to avoid extreme values
+        conv = False
+        for i in range(self.max_iter):
+            g, H, curr_obj = grad_Hessian_wrt_u(u_curr)
+            # print(f"Iter{i + 1}  ===== g: %f, H: %f, H^-1: %f" %(g, H, H**(-1)))
+
+            d = -g/H if H > 0.0 else -g
+            g_d = g * d
+            lam_sq = -g_d
+
+            if g > 0 and np.abs(u_curr - 4.0) < self.grad_tol:
+                print(f"{RED}Gradient is positive and u_curr is at the upper bound. Stopping optimization.{RESET}")
+                self.psc = u_curr
+                break
+
+            if g < 0 and np.abs(u_curr + 4.0) < self.grad_tol:
+                print(f"{RED}Gradient is negative and u_curr is at the lower bound. Stopping optimization.{RESET}")
+                self.psc = u_curr
+                break
+
+            step = backtracking_line_search_rij(
+                y,  self.alpha, u_curr, T, Kx, d, g_d, 
+                dist = self.reg, phi = self.phi, lam=self.lam
+            )
+            u_new = u_curr + (step*d)
+
+            u_new = np.clip(u_new, -4.0, 4.0)  # Clip u_new to avoid extreme values
+            if H <= 0.0:
+                f_w_new = (Kx + R_u(T, u_new)) @ w
+                new_obj = self.Obj(y, f_w_new + bias, (self.lam/2.) * (w.T @ f_w_new))
+                lam_sq = curr_obj - new_obj
+
             if self.check_convergence(u_new, u_curr, 
                                       g_norm = np.abs(g), 
-                                    #   lam2 = lam_sq,
-                                      lam2 = 2*self.tol,
+                                      lam2 = lam_sq,
                                       i = i):
-                # print(f"converge for r (iter. {i})")
+                if self.verbose:
+                    print(f"Converge for r (iter. {i + 1})")
                 conv = True
                 self.psc = u_new
                 break
@@ -790,14 +692,16 @@ class KRGEE:
             u_curr = u_new
 
         if not conv:
-            print("No convergence after %i iterations" % self.max_iter)
-            print(f"curr. phylo signal: {np.exp(-u_curr)}")
+            print(f"{RED}No convergence after %i iterations {RESET}" % self.max_iter)
+            print(f"curr. alpha: {np.exp(-u_curr)}")
 
         self.psc = u_curr
 
 
     def opt_weights(self, K, y, Kx = None):
-        
+
+        self.verbose = True
+
         n = y.shape[0]
         p = K.shape[1] if K is not None else 0
         K_dtype = K.dtype if K is not None else float
@@ -856,6 +760,7 @@ class KRGEE:
                                       g_norm = np.linalg.norm(G, ord=2), 
                                       lam2 = lam_sq, 
                                       i = i):
+                # print("w: ", self.alpha)
                 conv = True
                 f_curr = f_new
                 break
@@ -882,7 +787,7 @@ class KRGEE:
         self.y = y.copy()
 
         if not conv:
-            print("No convergence after %i iterations" % self.max_iter)
+            print(f"{RED}No convergence after %i iterations {RESET}" % self.max_iter)
             print("gamma, phi, lam:")
             print(self.gamma, self.phi, self.lam)
 
@@ -945,8 +850,8 @@ class KRGEE:
 
         self.K_train = self.center_kernel(K_x_uc + self.Rnn, save_means = True)
         self.opt_weights(self.K_train, y, Kx = K_x)
-        self.opt_rij_gradient_descent(y, T = vcv, Kx = K_x, uc = self.psc)
-        # self.opt_rij_alpha(y, T = vcv, Kx = K_x, uc = self.psc)
+        # self.opt_rij_gradient_descent(y, T = vcv, Kx = K_x, uc = self.psc)
+        self.opt_rij_alpha(y, T = vcv, Kx = K_x, uc = self.psc)
 
         self.update_K_train(u_new = self.psc, T = vcv, K_x_uc = K_x_uc)
 
@@ -954,11 +859,10 @@ class KRGEE:
 
         # let re-use alpha weights from the previous 
         # step to speed up convergence
-        # alt_iter = 0
         for i in range(self.max_iter):
             self.opt_weights(self.K_train, y, Kx=K_x) # update weights
-            self.opt_rij_gradient_descent(y, T=vcv, Kx=K_x, uc=self.psc)
-            # self.opt_rij_alpha(y, T = vcv, Kx = K_x, uc = self.psc)
+            # self.opt_rij_gradient_descent(y, T=vcv, Kx=K_x, uc=self.psc)
+            self.opt_rij_alpha(y, T = vcv, Kx = K_x, uc = self.psc)
 
             self.update_K_train(u_new=self.psc, T=vcv, K_x_uc=K_x_uc)
             new_score = self.get_new_score(K_x, y)
@@ -986,9 +890,8 @@ class KRGEE:
         self.K_train = self.center_kernel(K_x_uc + self.Rnn, save_means = True)
 
         self.opt_weights(self.K_train, y, Kx = None)
-        # print("0. psc before opt:", self.psc)
         self.opt_rij_gd_fullK(y, T = vcv, Kx = K_x, uc = self.psc)
-        # print("0. psc after opt:", self.psc)
+        # self.opt_rij_bracketing(y, T = vcv, Kx = K_x, a = -5, b = 5, n = bracketing_n)
 
         self.update_K_train(u_new = self.psc, T = vcv, K_x_uc = K_x_uc)
 
@@ -996,12 +899,13 @@ class KRGEE:
         curr_vals = np.hstack((self.f_curr, self.psc))
 
 
-        # self.warm_start = True
+        self.warm_start = True
         conv = False
         for i in range(self.max_iter):
             self.opt_weights(self.K_train, y, Kx=None) # update weights
             # print(f"{i + 1}. psc before opt:", self.psc)
             self.opt_rij_gd_fullK(y, T=vcv, Kx=K_x, uc=self.psc)
+            # self.opt_rij_bracketing(y, T = vcv, Kx = K_x, a = -5, b = 5, n =bracketing_n)
             # print(f"{i + 1}. psc after opt:", self.psc)
 
             self.update_K_train(u_new=self.psc, T=vcv, K_x_uc=K_x_uc)
@@ -1014,9 +918,8 @@ class KRGEE:
                                       g_norm=self.grad_tol*2, 
                                       lam2=lam_sq, 
                                       i = i + 1):
-            # if lam_sq/2  < self.tol:
-#            # if alt_iter > 3:
-                # print(f"Converged at iteration {i + 1}, phylogenetic correlation parameter: {self.psc}, new score: {new_score}, old score: {curr_score}, alpha: {np.exp(-self.psc)}")
+                if self.verbose:
+                    print(f"Converged at iteration {i + 1}, phylogenetic correlation parameter: {self.psc}, new score: {new_score}, old score: {curr_score}, alpha: {np.exp(-self.psc)}")
                 # print("converged.")
                 # print()
                 conv = True
@@ -1024,26 +927,16 @@ class KRGEE:
             curr_score = new_score
 
         if not conv:
-            print(f"Din't converged. phylogenetic correlation parameter: {self.psc}, new score: {new_score}, old score: {curr_score}, alpha: {np.exp(-self.psc)}")
+            print(f"{RED}No convergence. phylogenetic correlation parameter: {self.psc}, new score: {new_score}, old score: {curr_score}, alpha: {np.exp(-self.psc)}{RESET}")
+        self.warm_start = False
 
-        # self.warm_start = False
-
-    def dR_R_ls(self, u_curr, T):
-        """
-        Get the derivative of the correlation matrix with respect to u
-        and the correlation matrix itself. Both are centered.
-
-        """
-        alpha_u = np.exp(-u_curr)
-        R_uc = np.exp( -alpha_u * T)
-        dR_uc = alpha_u * T * R_uc
-        return dR_uc, R_uc
 
     def opt_R_ls(self, u, T):
 
         u_curr = u
         
-        dR, R = self.dR_R_ls(u_curr, T) # double computation for R. Fix this later
+        # dR, R = self.dR_R_ls(u_curr, T) # double computation for R. Fix this later
+        R,dR,_ = self.R_dR_ddR_uc(u_curr, T) # double computation for R. Fix this later
         A_sq = self.Vu_func(self.f_curr)**(1/2)
         V = (A_sq[:, None] * R) * A_sq * self.phi
         curr_obj = np.linalg.slogdet(V)[1] + self.r.T @ np.linalg.solve(V, self.r)
@@ -1053,14 +946,14 @@ class KRGEE:
         for i in range(self.max_iter):
             g = np.trace(np.linalg.solve(V, dR)) - self.r.T @ np.linalg.solve(V, dR @ np.linalg.solve(V, self.r))
             
-            u_new = u_curr - self.lr * g
+            # u_new = u_curr - self.lr * g
             
             # adaptive gradient
             # self.grad_s += g**2
             # u_new = u_curr - (self.lr/np.sqrt(self.grad_s + self.grad_eps)) * g
 
-            # self.grad_s = self.beta*self.grad_s + (1 - self.beta)*g**2
-            # u_new = u_curr - (self.lr/np.sqrt(self.grad_s + self.grad_eps)) * g
+            self.grad_s = self.beta*self.grad_s + (1 - self.beta)*g**2
+            u_new = u_curr - (self.lr/np.sqrt(self.grad_s + self.grad_eps)) * g
 
             u_new = np.clip(u_new, -4, 4)
             dR_new, R_new = self.dR_R_ls(u_new, T)
@@ -1082,7 +975,7 @@ class KRGEE:
         """
         Fit the model
         """
-        self.psc = 0.0 # arbitrary initial value for the phylogenetic correlation parameter
+        self.psc = -2.0 # arbitrary initial value for the phylogenetic correlation parameter
         self.X = X # store the training data for prediction
 
         if self.add_extraK:
@@ -1145,7 +1038,7 @@ class KRGEE:
 
                         new_score = self.get_new_score(None, y)
                         if (curr_score - new_score)/2 < self.tol:
-                            # print(f"Converged at iteration {i + 1}, phylogenetic correlation parameter: {self.psc}, new score: {new_score}, old score: {curr_score}, alpha: {np.exp(-self.psc)}")
+                            print(f"Converged at iteration {i + 1}, phylogenetic correlation parameter: {self.psc}, new score: {new_score}, old score: {curr_score}, alpha: {np.exp(-self.psc)}")
                             # self.psc = u_curr
                             conv = True
                             break
@@ -1173,7 +1066,7 @@ class KRGEE:
         if i == 0:
             return False
 
-        # self.verbose = True
+        self.verbose = not True
 
         if lam2/2 <= self.tol:
             if self.verbose:
@@ -1191,8 +1084,9 @@ class KRGEE:
         else:
             max_updt = np.abs(f_new - f_curr)
             w_max = np.abs(f_new)
+            # w_max = np.abs(f_curr) + 1
 
-            if max_updt < self.tol:
+            if max_updt/w_max < self.tol:
                 if self.verbose:
                     print(f"f update is below the tolerance threshold (iter. {i})")
                 return True
@@ -1573,5 +1467,173 @@ class Logistic(KRGEE):
     #     V_sqInv  = (A_qInv[:, None] * self.L_inv) * A_qInv
     #     V_sqInv *= (self.phi)**(-1/2) # O(n^2)
     #     return V_sqInv
+
+    # def opt_rij_alpha(self, y, T, Kx, uc = 0.0):
+    #     """
+
+    #     u used for phylogenetic correlation alpha = exp(-u), 
+    #     dont get confuse with u from best average estimator u = mu(f_curr)        
+    #     """
+
+    #     n = y.shape[0]
+    #     w = self.alpha[1:]
+
+    #     u_curr = uc
+    #     conv = False
+    #     for i in range(self.max_iter):
+    #         # get derivatives of \mu and \mu
+    #         dR, R = self.dR_R(u_curr, T)
+    #         # print("dR, R: ", dR, R)
+
+    #         f_curr = (Kx + R) @ w + self.alpha[0]
+    #         # print("f_curr:", f_curr)
+
+    #         Du, u = self.get_Du(f_curr)
+    #         V_Inv = self.get_V_Inv(f_curr) # O(n^2)
+    
+    #         DuDa =  (Du[:,None] * dR) @ w
+    #         DuDaT_V = np.matmul(DuDa.T, V_Inv) # O(n^3)
+    #         DuDaT_V_DuDa = np.matmul(DuDaT_V, DuDa) # O(n^3)
+
+    #         H = (1/n)*(DuDaT_V_DuDa) # Hessian is an scalar
+    #         # clip the hessian to avoid numerical issues
+    #         # if H == np.inf or H == 0:
+    #         #     print("dR: ", dR)
+    #         #     print('alpha: ', self.alpha)
+    #         #     print("R: ", R)
+    #         #     print("R_uc: ", np.exp(-np.exp(-u_curr) * T))
+    #         #     print("f_curr: ", f_curr)
+    #         #     print("Du: ", Du)
+    #         #     print("u: ", u)
+    #         #     print("V_Inv: ", V_Inv)
+    #         #     print("DuDa: ", DuDa)
+    #         #     print("DuDaT_V: ", DuDaT_V)
+    #         #     print("DuDaT_V_DuDa: ", DuDaT_V_DuDa)
+    #         #     raise ValueError("Hessian is zero or infinity. Check the input data and parameters.")
+    
+    #         H = np.clip(H, -self.grad_clip, self.grad_clip)
+
+
+
+    #         # print("Hessian from alpha param: ", H)
+
+    #         # gradient
+    #         g = -(1/n)*(DuDaT_V @ (y - u))
+    #         g = np.clip(g, -self.grad_clip, self.grad_clip)
+    #         # print("Gradient from alpha param: ", g)
+
+    #         u_new, lam_sq = newton_raphson_step_rij(y, H, g, f_curr,
+    #                                                 u_curr, T, Kx, 
+    #                                                 self.alpha, 
+    #                                                 self.hessian_tol, 
+    #                                                 dist = self.reg, 
+    #                                                 phi = self.phi)
+    #         # print("u_new, u_curr: ", u_new, u_curr)
+    #         u_new = np.clip(u_new, -4, 4)         
+    #         if self.check_convergence(u_new, u_curr, 
+    #                                 #   g_norm = np.linalg.norm(g, ord=2), 
+    #                                   g_norm = np.abs(g), 
+    #                                   lam2 = lam_sq, 
+    #                                   i = i):
+    #             conv = True
+    #             self.psc = u_new
+    #             break
+
+    #         u_curr = u_new
+
+    #     if not conv:
+    #         print(f"{RED}No convergence after %i iterations {RESET}" % self.max_iter)
+    #         print(f"curr. alpha: {np.exp(-u_curr)}")
+
+    #     self.psc = u_curr
+
+    # def opt_rij_gradient_descent(self, y, T, Kx, uc = 1):
+    #     """
+    #     Optimize the phylogenetic correlation parameter using gradient descent
+    #     """
+    #     n = y.shape[0]
+    #     w = self.alpha[1:]
+
+    #     u_curr = uc
+    #     conv = False
+    #     self.grad_s = 0.0
+    #     for i in range(self.max_iter):
+    #         dR, R = self.dR_R(u_curr, T)
+    #         f_curr = (Kx + R) @ w + self.alpha[0]
+
+    #         Du, u = self.get_Du(f_curr)
+    #         V_Inv = self.get_V_Inv(f_curr)
+
+    #         DuDa =  (Du[:,None] * dR) @ w
+    #         DuDaT_V = np.matmul(DuDa.T, V_Inv)
+
+    #         g = -(1/n)*(DuDaT_V @ (y - u))
+
+    #         # update u using a simple gradient descent step
+    #         # step_size = 0.001  # You may want to tune this parameter
+    #         # u_new = u_curr - step_size * g
+
+    #         # self.grad_s = self.beta*self.grad_s + (1 - self.beta)*g**2
+    #         # u_new = u_curr - (self.lr/np.sqrt(self.grad_s + self.grad_eps)) * g
+
+    #         u_new, lam_sq = newton_raphson_step_rij(y, 1, g, f_curr,
+    #                                                 u_curr, T, Kx,
+    #                                                 self.alpha,
+    #                                                 self.hessian_tol,
+    #                                                 dist=self.reg,
+    #                                                 phi=self.phi)
+
+    #         u_new = np.clip(u_new, -4, 4)  # Clip u_new to avoid extreme values
+    #         if self.check_convergence(u_new, u_curr, 
+    #                                   g_norm = np.abs(g), 
+    #                                   lam2 = lam_sq, 
+    #                                 #   lam2 = self.tol*2, 
+    #                                   i = i):
+    #             conv = True
+    #             self.psc = u_new
+    #             break
+
+    #         u_curr = u_new
+
+    #     if not conv:
+    #         print(f"{RED}No convergence after %i iterations {RESET}" % self.max_iter)
+    #         print(f"curr. alpha: {np.exp(-u_curr)}")
+
+    #     self.psc = u_curr
+
+    # def opt_rij_bracketing(self, y, T, Kx, a = -4, b = 4, n = 10):
+
+    #     w = self.alpha[1:]
+    #     bias = self.alpha[0]
+    #     lam_half = self.lam/2.
+
+    #     a_new,b_new = fibonacci_search(a, b, n, eps = 1e-3,
+    #                         T = T, Kx = Kx, w = w,
+    #                         y = y, lam_half = lam_half, bias = bias,
+    #                         dist = self.reg, phi = self.phi)        
+    #     # opt_u = mybrent(a = a, b = b, n = n, eps = 1e-3,
+    #     #               T = T, Kx = Kx, w = w,
+    #     #               y = y, lam_half = lam_half, bias = bias,
+    #     #               dist = self.reg, phi = self.phi)
+
+
+    #     # opt_u = np.clip(opt_u, -4, 4)
+    #     # print(f"Optimal u: {opt_u}, Optimal alpha: {np.exp(-opt_u)}")
+    #     # self.psc = opt_u
+
+    #     self.psc = (a_new + b_new)/2.
+
+
+    # def dR_R_ls(self, u_curr, T):
+    #     """
+    #     Get the derivative of the correlation matrix with respect to u
+    #     and the correlation matrix itself. Both are centered.
+
+    #     """
+    #     alpha_u = np.exp(-u_curr)
+    #     R_uc = np.exp( -alpha_u * T)
+    #     dR_uc = alpha_u * T * R_uc
+    #     return dR_uc, R_uc
+
 
 #endregion
