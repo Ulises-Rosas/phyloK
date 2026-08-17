@@ -1,5 +1,6 @@
 import numpy as np
 # from numba import njit
+# from scipy.optimize import brent
 
 def center_kernel(K):
     """
@@ -140,39 +141,42 @@ def dR_u(T, u, center = True):
 
 
 
-def backtracking_line_search_rij(y, f_w_a, w_a, u, T, Kx, d, g_d, 
-                                 dist = 'logistic', phi = 1,
-                                 reg_term = None, lam = 1,):
+def backtracking_line_search_rij(y, w_a, u, T, Kx, d, g_d, 
+                                 dist = 'logistic',
+                                 phi = 1, lam = 1,):
     """
     Also known as the Armijo's rule: It makes to satisfy 
     the first Wolfe condition. It is a sufficient decrease condition.
     """
     beta=1e-4
     p=0.5
-    t=10
+
+    if d > 0:
+        s = (4. - u)/d
+    else:
+        s = (-4. - u)/d
+
+    t=min(10, s)
+
 
     w = w_a[1:] # penalized weights 
     b = w_a[0] # intercept
 
-    if reg_term is None:
-        obj = Obj(y, f_w_a, 0, dist=dist, phi=phi)
-    else:
-        obj = Obj(y, f_w_a, reg_term, dist=dist, phi=phi)
-
-
     def f_u_td(u_td):
+        # if u_td < -4.0 or u_td > 4.0:
+        #     print(f"Warning: u_td = {u_td} is out of bounds [-4, 4]. current u = {u}")
+        #     print(f"backtracking line search: initial step size: {t}")
+
         K_w_new = (Kx + R_u(T, u_td)) @ w
-        if reg_term is None:
-            return K_w_new + b
-        else:
-            return K_w_new + b, (lam/2)* (w.T @ K_w_new)
+        return K_w_new + b, (lam/2)* (w.T @ K_w_new)
 
+    obj = Obj(y, f_u_td(u), 0, dist=dist, phi=phi)
 
-    # k = 0
+    k = 0
     while Obj(y, f_u_td(u + t*d), 0, dist=dist, phi=phi) > obj + (t * beta * g_d):
         t *= p
-        if t <= 1e-6:
-            t = 1e-6
+        if t <= 1e-7:
+            t = .0
             break
         # k += 1
         # if k > 10:
@@ -201,42 +205,127 @@ def newton_raphson_step_rij(y, H, g, f_w_a, u, T, Kx, w_a,
     return u, -g_d
 
 
+def adaptive_delta(u_curr, g, s, rms_x, beta = 0.9, eps = 1e-8):
+    """
+    Adaptive delta method for updating u
+    """
+    rms_g = beta*s + (1 - beta)*g**2
+    delta_x = - (np.sqrt( rms_x + eps )/np.sqrt(rms_g + eps)) * g
+    
+    rms_x = beta*rms_x + (1 - beta)*delta_x**2
+    u_new = u_curr + delta_x
+    return u_new,  s, rms_x
 
-# def centerK(K):
-#     K_row_mean = np.mean(K, axis = 1)
-#     K_col_mean = np.mean(K, axis = 0)
-#     K_all_mean = np.mean(K)
+def adam(u_curr, k, g, v, s, lr = 0.001, gamma_v = 0.9, gamma_s = 0.999, eps = 1e-8):
+    
+    # biased decaying momentum
+    v = gamma_v*v + (1 - gamma_v)*g
+    # biased decaying sq. gradient
+    s = gamma_s*s + (1 - gamma_s)*g**2
+    # corrected decaying momentum
+    v_hat = v/(1 - gamma_v**k)
+    # corrected decaying sq. gradient
+    s_hat = s/(1 - gamma_s**k)
+    # new iterate
+    u_new = u_curr - (lr*v_hat)/(np.sqrt(s_hat) + eps)
 
-#     K -= K_col_mean
-#     K -= K_row_mean.reshape(-1,1)
-#     K += K_all_mean
-
-#     return K
-# X = np.array(
-#     [[1,2,3],
-#      [3,2,1],
-#      [2,1,3]], dtype=float)
-
-# X = np.array(
-#     [[1,2,3],
-#      [3,2,1],
-#      [2,1,3]], dtype=float)
-
-# np.hstack((X[:,0], X[:,1]))
-# np.exp(X)
-# assert np.all(np.diag(X) == 0.0), 'OU needs path length distance'
-# Y = np.random.random(X.shape)
-# Du =  np.array([1,2,3])
-# Y * Du
-
-# Du.shape[0]
+    return u_new, v, s
 
 
+def nesterov_momentum(u_curr, v, nabla_f, beta = 0.9, lr = 0.001):
+    # a,_ = nabla_f(u_curr + beta*v)
+    # v = beta*v - lr*a
 
-# C = np.eye(X.shape[0]) - np.ones(X.shape)/X.shape[0]
-# C @ X + Y @ C
+    v = beta*v - lr*nabla_f
+    u_new = u_curr + v
+    return u_new, v
 
-# np.round(centerK(X)+centerK(Y), 5) == np.round(C @ X @ C + C @ Y @ C, 5)
+def hyper_nesterov_momentum(u_curr, v, g_prev, g,
+                            beta = 0.9, lr = 0.001, lrlr = 0.001):
+
+    lr = lr  - lrlr*g*(-g_prev - beta*v)
+    v = beta*v + g
+    g_prev = g
+
+    u_new = u_curr - lr*(g + beta*v)
+    return u_new, v, g_prev, lr
+
+def fibonacci_search(a, b, n, eps = 1e-3,
+                     T = None, Kx = None, w = None,
+                     y = None, lam_half = None, bias = None,
+                     dist = 'logistic', phi = 1):
+
+
+    def f(uc):
+        R = R_u(T, np.exp(-uc), center = False)
+        f_w = (Kx + R) @ w
+        p = lam_half * (w.T @ f_w)
+        return Obj(y, f_w + bias, p, dist = dist, phi = phi)
+
+    gr = (np.sqrt(5) + 1) / 2
+    s = (1-np.sqrt(5))/(1+np.sqrt(5))
+    rho = (1 - s**n)/(gr *(1 - s**(n+1)) )
+
+    d = rho*b + (1 - rho)*a
+    yd = f(d)
+    for i in range(1, n):
+        # print(f"fibonacci search: a = {a}, b = {b}, f(a) = {f(a)}, f(b) = {f(b)}")
+
+        if i == n - 1:
+            c = eps*a + (1 - eps)*b
+        else:
+            c = rho*a + (1 - rho)*b
+
+        yc = f(c)
+        if yc < yd:
+            b,d,yd = d,c,yc
+        else:
+            a,b = b,c
+
+        rho = (1 - s**(n-i))/(gr *(1 - s**(n-i+1)) )
+
+
+    return (a,b) if a < b else (b,a)
+
+
+# def mybrent(a, b, n, eps = 1e-3,
+#           T = None, Kx = None, w = None,
+#           y = None, lam_half = None, bias = None,
+#           dist = 'logistic', phi = 1):
+
+#     def f(uc):
+#         R = R_u(T, np.exp(-uc), center = False)
+#         f_w = (Kx + R) @ w
+#         p = lam_half * (w.T @ f_w)
+#         return Obj(y, f_w + bias, p, dist = dist, phi = phi)
+
+
+#     res = brent(f, brack=(a, b), tol=eps, maxiter = n)
+#     return res
+
+
+
+            # adaptive gradient
+            # self.grad_s += g**2
+            # u_new = u_curr - (self.lr/np.sqrt(self.grad_s + self.grad_eps)) * g
+
+            # RMSprop
+            # self.grad_s = self.beta*self.grad_s + (1 - self.beta)*g**2
+            # u_new = u_curr - (mylr/np.sqrt(self.grad_s + self.grad_eps)) * g
+
+            # adaptive delta
+            # u_new, rms_x, self.grad_s = adaptive_delta(u_curr, g, self.grad_s, rms_x, self.beta, self.grad_eps)
+
+            # ADAM optimizer
+            # u_new, v, s = adam(u_curr, i + 1, g, v, s, mylr)
+
+            # nesterov momentum
+            # nabla_f,_ = grad_wrt_u(u_curr - self.beta * v)
+            # u_new, v = nesterov_momentum(u_curr, v, nabla_f, self.beta, mylr)
+
+            # hypergradient nesterov momentum
+                # u_new, v, g_prev, mylr = hyper_nesterov_momentum(u_curr, v, g_prev, g, self.beta, mylr, mylrlr)
+
 
 
 
