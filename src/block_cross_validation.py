@@ -131,8 +131,8 @@ def sort_P_r(P_r, P_index):
     else:
         lam_index = None
 
-    if lam_index:
-        P_r = P_r[np.argsort(P_r[:,lam_index])[::-1],]
+    if lam_index is not None:
+        P_r = P_r[np.argsort(P_r[:,lam_index], )[::-1],]
 
     return P_r
 
@@ -210,11 +210,13 @@ def k_fold_cv_weigthed(X, y, vcv, model, W,
 
         all_errors.append([init_idx, init_err])
 
-        pb = progressbar(P_r, prefix = "Evaluating hyperparameters: ", size=40) if verbose else P_r
+        # pb = progressbar(P_r, prefix = "Evaluating hyperparameters: ", size=40) if verbose else P_r
+        pb = progressbar(P_r, prefix = "Evaluating hyperparameters: ", size=40)
         j = 0
         for p_j in pb:
-            
+
             if j == init_idx:
+                j += 1
                 continue
 
             tmp_param = dict(zip(P_n, p_j))
@@ -233,6 +235,8 @@ def k_fold_cv_weigthed(X, y, vcv, model, W,
             else:
                 tmp_err = model.score(X_test, y_test, None, metric = metric)*len(y_test)
 
+            if verbose:
+                print(f" fold: {i}, hyperparam {j}: {tmp_param}, alpha: {model.psc}, error: {tmp_err}")
             all_errors.append([j, tmp_err])
             j += 1
 
