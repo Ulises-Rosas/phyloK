@@ -210,8 +210,8 @@ def k_fold_cv_weigthed(X, y, vcv, model, W,
 
         all_errors.append([init_idx, init_err])
 
-        # pb = progressbar(P_r, prefix = "Evaluating hyperparameters: ", size=40) if verbose else P_r
-        pb = progressbar(P_r, prefix = "Evaluating hyperparameters: ", size=40)
+        pb = progressbar(P_r, prefix = "Evaluating hyperparameters: ", size=40) if verbose else P_r
+        # pb = progressbar(P_r, prefix = "Evaluating hyperparameters: ", size=40)
         j = 0
         for p_j in pb:
 
