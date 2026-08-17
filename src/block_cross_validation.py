@@ -232,6 +232,7 @@ def k_fold_cv_weigthed(X, y, vcv, model, W,
 
             if model.add_extraK and is_vcv:
                 tmp_err = model.score(X_test, y_test, vcv_test_12, metric =metric)*len(y_test)
+
             else:
                 tmp_err = model.score(X_test, y_test, None, metric = metric)*len(y_test)
 
