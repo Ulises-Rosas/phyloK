@@ -80,9 +80,9 @@ def alpha_weighting(tree, alpha=1/4, tol = 1e-8,
         l = v.left
         r = v.right
         if branch_length:
-            v.support = l.branch_length + r.branch_length
-        else:
             v.support = l.support + r.support + v.branch_length
+        else:
+            v.support = l.support + r.support
 
     # alpha = 1/4
     A = {}
