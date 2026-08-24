@@ -2,7 +2,8 @@ import numpy as np
 from numpy import linalg as la
 
 from phylokrr_dev.opt import (newton_raphson_step, R_u, 
-                              backtracking_line_search_rij)
+                              backtracking_line_search_rij,
+                              backtracking_line_search_rij_gee)
 from phylokrr.kernels import linear_kernel
 # from phylokrr_dev.opt import *
 
@@ -277,6 +278,11 @@ class KRGEE:
 
         # E,Q = la.eigh(R)
         self.L_inv = Q @ np.diag(E**(-1/2)) @ Q.T
+
+        if np.isnan(self.L_inv).any():
+            print(R, self.add_extraK, self.process)
+            raise ValueError("Bad matrix")
+
         return Q @ np.diag(E**(-1)) @ Q.T
     
     def get_R_inv(self, vcv):
@@ -484,109 +490,6 @@ class KRGEE:
         V_Inv *= (self.phi)**(-1) # O(n^2)    
         return V_Inv
 
-    def krgee_fit(self, K, y):
-        
-        n = y.shape[0]
-        p = K.shape[1] if K is not None else 0
-        K_dtype = K.dtype if K is not None else float
-
-        ones = np.ones(n, dtype=K_dtype)
-        
-        if p > 0:
-            K_0 = np.zeros((n + 1, p + 1), dtype=K_dtype)
-            K_0[1:, 1:] = K
-            lK_0 = self.lam * K_0
-
-        else:
-            lK_0 = np.array([[0]], dtype=K_dtype)
-
-
-        # concatenate ones to K for intercept
-        K_a = np.column_stack((ones, K)) if p > 0 else ones.reshape(-1, 1)
-        K_a = np.asfortranarray(K_a, dtype=K_dtype)
-
-        if not self.warm_start or np.any(np.isnan(self.alpha)):
-            self.alpha = np.zeros(p + 1) # alpha weights
-            self.alpha = np.ascontiguousarray(self.alpha, dtype=K_dtype)
-            self.phi = 1
-
-        assert len(self.alpha) > 0, "The model needs to be fitted first"
-    
-        f_curr = K_a @ self.alpha
-        conv = False
-        for i in range(self.max_iter):
-            # get derivatives of \mu and \mu
-            
-            Du, u = self.get_Du(f_curr)
-            V_Inv = self.get_V_Inv(f_curr) # O(n^2)
-    
-            DuDa = Du[:,None] * K_a # O(n^2)
-            DuDaT_V = np.matmul(DuDa.T, V_Inv) # O(n^3)
-            DuDaT_V_DuDa = np.matmul(DuDaT_V, DuDa) # O(n^3)
-
-            H = ((1/n)*(DuDaT_V_DuDa)) + lK_0 # O(n^2)
-            # if np.linalg.cond(H) > 1/sys.float_info.epsilon:
-            #    H += np.eye(H.shape[0]) * self.hessian_tol
-
-            e = y - u # O(n)
-
-            # gradient
-            G =  ((-1/n)*(DuDaT_V @ e)) + lK_0 @ self.alpha # O(n^2)
-
-            G_norm = np.linalg.norm(G, ord=2)
-            # gradient clipping, O(n)
-            # to avoid exploding gradients
-            # if G_norm >= self.grad_clip:
-            #     G *= (self.grad_clip / G_norm)
-            if G_norm/max(1, np.linalg.norm(self.alpha, ord=2)) <= 1e-8:
-                if self.verbose:
-                    print("Gradient norm is below the clipping threshold")
-                conv = True
-                break
-
-            try:
-                self.alpha -= np.linalg.solve( H, G ) # O(n^3)
-
-            except np.linalg.LinAlgError:
-                print("Linear algebra error occurred at solve. Adding hessian_tol to the diagonal of H and trying again.")
-                self.alpha -= np.linalg.solve( H + self.hessian_tol * np.eye(H.shape[0]), G ) # O(n^3)
-    
-            # new optimal function val
-            f_new = K_a @ self.alpha
-            if self.check_convergence(f_new, f_curr) and i > 1:
-                if self.verbose:
-                    print("Converged at update = %i" %i)
-                conv = True
-                break
-
-            if self._verbose:
-                print("Iteration: ", i)
-                print('phi: ', self.phi)
-                print('fix_phi: ', self.fix_phi)
-                print()
-        
-            if not self.fix_phi:
-                if p > 0:
-                    #  hessian of the penalized coefficients (alpha without intercept)
-                    HA = H[1:,1:]
-                    # HA = ((1/n)*(DuDaT_V_DuDa[1:, 1:])) + lK # O(n^2)
-                    # UHA = (DuDaT_V_DuDa[1:, 1:] + lK) # O(n^2)
-                    self.set_df(HA) # O(n^3)
-                else:
-                    self.dof = n - 1
-                
-                self.set_phi(e)
-
-            f_curr = f_new
-
-        self.f_curr = f_curr
-        self.y = y.copy()
-
-        if not conv:
-            print(f"{RED}No convergence after %i iterations {RESET}" % self.max_iter)
-            print("gamma, phi, lam:")
-            print(self.gamma, self.phi, self.lam)
-
 
     def dR_R(self, u_curr, T):
         """
@@ -646,26 +549,14 @@ class KRGEE:
             return g, H, obj
 
         u_curr = uc
-        self.grad_s = 0.0
-
         conv = False
         for i in range(self.max_iter):
             g, H, curr_obj = grad_Hessian_wrt_u(u_curr)
-            # print(f"Iter{i + 1}  ===== g: %f, H: %f, H^-1: %f" %(g, H, H**(-1)))
+            # print(f"Iter{i + 1}  ===== g: %f, H: %f, H^-1: %f, u_curr: {u_curr}, alpha: {np.exp(-u_curr)}" %(g, H, H**(-1)))
 
             d = -g/H if H > 0.0 else -g
             g_d = g * d
             lam_sq = -g_d
-
-            if g > 0 and np.abs(u_curr - 4.0) < self.grad_tol:
-                print(f"{RED}Gradient is positive and u_curr is at the upper bound. Stopping optimization.{RESET}")
-                self.psc = u_curr
-                break
-
-            if g < 0 and np.abs(u_curr + 4.0) < self.grad_tol:
-                print(f"{RED}Gradient is negative and u_curr is at the lower bound. Stopping optimization.{RESET}")
-                self.psc = u_curr
-                break
 
             step = backtracking_line_search_rij(
                 y,  self.alpha, u_curr, T, Kx, d, g_d, 
@@ -677,7 +568,7 @@ class KRGEE:
             if H <= 0.0:
                 f_w_new = (Kx + R_u(T, u_new)) @ w
                 new_obj = self.Obj(y, f_w_new + bias, (self.lam/2.) * (w.T @ f_w_new))
-                lam_sq = curr_obj - new_obj
+                lam_sq = 2*(curr_obj - new_obj)
 
             if self.check_convergence(u_new, u_curr, 
                                       g_norm = np.abs(g), 
@@ -685,6 +576,7 @@ class KRGEE:
                                       i = i):
                 if self.verbose:
                     print(f"Converge for r (iter. {i + 1})")
+                    # print("---- CURR OBJ:", curr_obj)
                 conv = True
                 self.psc = u_new
                 break
@@ -801,17 +693,6 @@ class KRGEE:
 
         u = self.mu(f)
         return - np.mean(self.Q(y, u)) + p
-
-    def fit0(self, X, y, vcv = None):
-        """
-        Fit the model
-        """
-        self.X = X # store the training data for prediction
-        self.set_R_inv(vcv) # it returns identity matrix if vcv is None
-        self.set_K_train(self.X)
-
-        # self.krgee_fit(self.K_train, y)
-        self.opt_weights(self.K_train, y)
 
     def update_K_train(self, u_new, T, K_x_uc):
         """
@@ -933,43 +814,75 @@ class KRGEE:
 
     def opt_R_ls(self, u, T):
 
-        u_curr = u
-        
-        # dR, R = self.dR_R_ls(u_curr, T) # double computation for R. Fix this later
-        R,dR,_ = self.R_dR_ddR_uc(u_curr, T) # double computation for R. Fix this later
         A_sq = self.Vu_func(self.f_curr)**(1/2)
-        V = (A_sq[:, None] * R) * A_sq * self.phi
-        curr_obj = np.linalg.slogdet(V)[1] + self.r.T @ np.linalg.solve(V, self.r)
-        # print("curr_obj: ", curr_obj)
-        
-        self.grad_s = 0.0
-        for i in range(self.max_iter):
-            g = np.trace(np.linalg.solve(V, dR)) - self.r.T @ np.linalg.solve(V, dR @ np.linalg.solve(V, self.r))
-            
-            # u_new = u_curr - self.lr * g
-            
-            # adaptive gradient
-            # self.grad_s += g**2
-            # u_new = u_curr - (self.lr/np.sqrt(self.grad_s + self.grad_eps)) * g
 
-            self.grad_s = self.beta*self.grad_s + (1 - self.beta)*g**2
-            u_new = u_curr - (self.lr/np.sqrt(self.grad_s + self.grad_eps)) * g
+        def grad_Hessian_wrt_u(u_curr):
+            R,dR,ddR = self.R_dR_ddR_uc(u_curr, T) 
+            V   = (A_sq[:, None] * R  ) * A_sq * self.phi
+            dV  = (A_sq[:, None] * dR ) * A_sq * self.phi
+            ddV = (A_sq[:, None] * ddR) * A_sq * self.phi
+
+            curr_obj = np.linalg.slogdet(V)[1] + self.r.T @ np.linalg.solve(V, self.r)
+            g = np.trace(np.linalg.solve(V, dV)) - self.r.T @ np.linalg.solve(V, dV @ np.linalg.solve(V, self.r))
+            xi = dV @ np.linalg.solve(V, dV)
+            A = ddV - xi
+            B = ddV - 2*xi
+            H = np.trace(np.linalg.solve(V, A))\
+                  - self.r.T @ np.linalg.solve( V, B @ np.linalg.solve(V, self.r) )
+
+            return g,H,curr_obj
+
+        conv = False
+        u_curr = u
+        for i in range(self.max_iter):
+            g,H,curr_obj = grad_Hessian_wrt_u(u_curr)
+            # print(f"Iter{i + 1}  ===== g: %f, H: %f, H^-1: %f" %(g, H, H**(-1)))
+
+            d = -g/H if H > 0.0 else -g
+            g_d = g * d
+            lam_sq = -g_d
+
+            if g > 0 and np.abs(u_curr - 4.0) < self.grad_tol:
+                print(f"{RED}Gradient is positive and u_curr is at the upper bound. Stopping optimization.{RESET}")
+                self.psc = u_curr
+                break
+
+            if g < 0 and np.abs(u_curr + 4.0) < self.grad_tol:
+                print(f"{RED}Gradient is negative and u_curr is at the lower bound. Stopping optimization.{RESET}")
+                self.psc = u_curr
+                break
+
+            step = backtracking_line_search_rij_gee(
+                self.r, u_curr, T,
+                A_sq, d, g_d, 
+                phi = self.phi,
+            )
+            u_new = u_curr + (step*d)
 
             u_new = np.clip(u_new, -4, 4)
-            dR_new, R_new = self.dR_R_ls(u_new, T)
-            V_new = (A_sq[:, None] * R_new) * A_sq * self.phi
-            new_obj = np.linalg.slogdet(V_new)[1] + self.r.T @ np.linalg.solve(V_new, self.r)
+            if H <= 0.0:
+                R_new = R_u(u_new, T, center = False)
+                V_new = (A_sq[:, None] * R_new) * A_sq * self.phi
+                new_obj = np.linalg.slogdet(V_new)[1] + self.r.T @ np.linalg.solve(V_new, self.r)
+                lam_sq = curr_obj - new_obj
 
-            if (curr_obj - new_obj)/2 < self.tol:
+            if self.check_convergence(u_new, u_curr, 
+                                      g_norm = np.abs(g), 
+                                      lam2 = lam_sq,
+                                      i = i):
+                if self.verbose:
+                    print(f"Converge for r (iter. {i + 1})")
+                conv = True
+                self.psc = u_new
                 break
 
             u_curr = u_new
-            curr_obj = new_obj
-            dR = dR_new
-            R = R_new
-        # print(f"Final phylogenetic correlation parameter: {u_curr}")
-        return u_curr, R
 
+        if not conv:
+            print(f"{RED}No convergence after %i iterations {RESET}" % self.max_iter)
+            print(f"curr. alpha: {np.exp(-u_curr)}")
+
+        self.psc = u_curr
 
     def fit(self, X, y, vcv = None):
         """
@@ -1003,54 +916,63 @@ class KRGEE:
         else:
             # V is either identity or dense
             # u_curr  = self.psc
-            is_PLdist = False
 
-            if vcv is not None:
-                # is path length distance matrix?
-                is_PLdist = np.all(np.diag(vcv) == 0.0)
-                if is_PLdist:
+            if self.process == 'BM':
+                assert np.all(np.diag(vcv) != 0.0),\
+                        "BM needs a correlation matrix"                
 
-                    """
-                    for optimizing the correlation parameter
-                    we have the following objectiv function to minimize:
+                self.set_R_inv(vcv) # it returns identity matrix if vcv is None
+                self.set_K_train(self.X)
+                self.opt_weights(self.K_train, y)
 
-                    log det V + r^T V^-1 r
+            elif self.process == 'OU':
 
-                    where V = A^1/2 R A^1/2 phi
+                assert np.all(np.diag(vcv) == 0.0), "OU needs path length matrix as input"
+                """
+                for optimizing the correlation parameter
+                we have the following objectiv function to minimize:
 
-                    its derivative with respect to the correlation parameter is:
+                log det V + r^T V^-1 r
 
-                    trace(V^-1 dV/du) - r^T V^-1 dV/du V^-1 r
-                    """                    
-                    self.set_K_train(self.X)
+                where V = A^1/2 R A^1/2 phi
 
-                    T  = vcv.copy()
+                its derivative with respect to the correlation parameter is:
+
+                trace(V^-1 dV/du) - r^T V^-1 dV/du V^-1 r
+                """                    
+                self.set_K_train(self.X)
+
+                T  = vcv.copy()
+                R = R_u(T, self.psc, center = False)
+                self.set_R_inv(R) # it returns identity matrix if vcv is None
+                
+                self.opt_weights(self.K_train, y)
+
+                curr_score = self.get_new_score(None, y)
+                conv = False
+                for i in range(self.max_iter):
+                    self.opt_R_ls(self.psc, T)
                     R = R_u(T, self.psc, center = False)
                     self.set_R_inv(R) # it returns identity matrix if vcv is None
                     self.opt_weights(self.K_train, y)
 
-                    curr_score = self.get_new_score(None, y)
-                    conv = False
-                    for i in range(self.max_iter):
-                        self.psc, R = self.opt_R_ls(self.psc, T)
-                        self.set_R_inv(R) # it returns identity matrix if vcv is None
-                        self.opt_weights(self.K_train, y)
+                    new_score = self.get_new_score(None, y)
+                    if (curr_score - new_score)/2 < self.tol:
+                        # print(f"Converged at iteration {i + 1}, phylogenetic correlation parameter: {self.psc}, new score: {new_score}, old score: {curr_score}, alpha: {np.exp(-self.psc)}")
+                        conv = True
+                        break
+                    curr_score = new_score
 
-                        new_score = self.get_new_score(None, y)
-                        if (curr_score - new_score)/2 < self.tol:
-                            print(f"Converged at iteration {i + 1}, phylogenetic correlation parameter: {self.psc}, new score: {new_score}, old score: {curr_score}, alpha: {np.exp(-self.psc)}")
-                            # self.psc = u_curr
-                            conv = True
-                            break
-                        curr_score = new_score
+                if not conv:
+                    print(f"Didn't phylogenetic correlation parameter: {self.psc}, new score: {new_score}, old score: {curr_score}, alpha: {np.exp(-self.psc)}")
+                # self.psc = u_curr     
+            else:
 
-                    if not conv:
-                        print(f"Didn't phylogenetic correlation parameter: {self.psc}, new score: {new_score}, old score: {curr_score}, alpha: {np.exp(-self.psc)}")
-                    # self.psc = u_curr            
+                raise ValueError("Model missing")
 
-            self.set_R_inv(vcv) # it returns identity matrix if vcv is None
-            self.set_K_train(self.X)
-            self.opt_weights(self.K_train, y)
+            # self.set_R_inv(vcv) # it returns identity matrix if vcv is None
+            # self.set_K_train(self.X)
+            # self.opt_weights(self.K_train, y)
 
 
     def check_convergence(self, f_new, f_curr, g_norm = 1, lam2 = 1, i = 1):
@@ -1636,4 +1558,117 @@ class Logistic(KRGEE):
     #     return dR_uc, R_uc
 
 
+    # def krgee_fit(self, K, y):
+        
+    #     n = y.shape[0]
+    #     p = K.shape[1] if K is not None else 0
+    #     K_dtype = K.dtype if K is not None else float
+
+    #     ones = np.ones(n, dtype=K_dtype)
+        
+    #     if p > 0:
+    #         K_0 = np.zeros((n + 1, p + 1), dtype=K_dtype)
+    #         K_0[1:, 1:] = K
+    #         lK_0 = self.lam * K_0
+
+    #     else:
+    #         lK_0 = np.array([[0]], dtype=K_dtype)
+
+
+    #     # concatenate ones to K for intercept
+    #     K_a = np.column_stack((ones, K)) if p > 0 else ones.reshape(-1, 1)
+    #     K_a = np.asfortranarray(K_a, dtype=K_dtype)
+
+    #     if not self.warm_start or np.any(np.isnan(self.alpha)):
+    #         self.alpha = np.zeros(p + 1) # alpha weights
+    #         self.alpha = np.ascontiguousarray(self.alpha, dtype=K_dtype)
+    #         self.phi = 1
+
+    #     assert len(self.alpha) > 0, "The model needs to be fitted first"
+    
+    #     f_curr = K_a @ self.alpha
+    #     conv = False
+    #     for i in range(self.max_iter):
+    #         # get derivatives of \mu and \mu
+            
+    #         Du, u = self.get_Du(f_curr)
+    #         V_Inv = self.get_V_Inv(f_curr) # O(n^2)
+    
+    #         DuDa = Du[:,None] * K_a # O(n^2)
+    #         DuDaT_V = np.matmul(DuDa.T, V_Inv) # O(n^3)
+    #         DuDaT_V_DuDa = np.matmul(DuDaT_V, DuDa) # O(n^3)
+
+    #         H = ((1/n)*(DuDaT_V_DuDa)) + lK_0 # O(n^2)
+    #         # if np.linalg.cond(H) > 1/sys.float_info.epsilon:
+    #         #    H += np.eye(H.shape[0]) * self.hessian_tol
+
+    #         e = y - u # O(n)
+
+    #         # gradient
+    #         G =  ((-1/n)*(DuDaT_V @ e)) + lK_0 @ self.alpha # O(n^2)
+
+    #         G_norm = np.linalg.norm(G, ord=2)
+    #         # gradient clipping, O(n)
+    #         # to avoid exploding gradients
+    #         # if G_norm >= self.grad_clip:
+    #         #     G *= (self.grad_clip / G_norm)
+    #         if G_norm/max(1, np.linalg.norm(self.alpha, ord=2)) <= 1e-8:
+    #             if self.verbose:
+    #                 print("Gradient norm is below the clipping threshold")
+    #             conv = True
+    #             break
+
+    #         try:
+    #             self.alpha -= np.linalg.solve( H, G ) # O(n^3)
+
+    #         except np.linalg.LinAlgError:
+    #             print("Linear algebra error occurred at solve. Adding hessian_tol to the diagonal of H and trying again.")
+    #             self.alpha -= np.linalg.solve( H + self.hessian_tol * np.eye(H.shape[0]), G ) # O(n^3)
+    
+    #         # new optimal function val
+    #         f_new = K_a @ self.alpha
+    #         if self.check_convergence(f_new, f_curr) and i > 1:
+    #             if self.verbose:
+    #                 print("Converged at update = %i" %i)
+    #             conv = True
+    #             break
+
+    #         if self._verbose:
+    #             print("Iteration: ", i)
+    #             print('phi: ', self.phi)
+    #             print('fix_phi: ', self.fix_phi)
+    #             print()
+        
+    #         if not self.fix_phi:
+    #             if p > 0:
+    #                 #  hessian of the penalized coefficients (alpha without intercept)
+    #                 HA = H[1:,1:]
+    #                 # HA = ((1/n)*(DuDaT_V_DuDa[1:, 1:])) + lK # O(n^2)
+    #                 # UHA = (DuDaT_V_DuDa[1:, 1:] + lK) # O(n^2)
+    #                 self.set_df(HA) # O(n^3)
+    #             else:
+    #                 self.dof = n - 1
+                
+    #             self.set_phi(e)
+
+    #         f_curr = f_new
+
+    #     self.f_curr = f_curr
+    #     self.y = y.copy()
+
+    #     if not conv:
+    #         print(f"{RED}No convergence after %i iterations {RESET}" % self.max_iter)
+    #         print("gamma, phi, lam:")
+    #         print(self.gamma, self.phi, self.lam)
+
+    # def fit0(self, X, y, vcv = None):
+    #     """
+    #     Fit the model
+    #     """
+    #     self.X = X # store the training data for prediction
+    #     self.set_R_inv(vcv) # it returns identity matrix if vcv is None
+    #     self.set_K_train(self.X)
+
+    #     # self.krgee_fit(self.K_train, y)
+    #     self.opt_weights(self.K_train, y)
 #endregion

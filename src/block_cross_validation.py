@@ -1,5 +1,12 @@
+# import os
+# os.environ["OMP_NUM_THREADS"] = "1"
+# os.environ["MKL_NUM_THREADS"] = "1"
+# os.environ["OPENBLAS_NUM_THREADS"] = "1"
+# os.environ["VECLIB_MAXIMUM_THREADS"] = "1"
+# os.environ["NUMEXPR_NUM_THREADS"] = "1"
 import time
 from collections import deque
+import multiprocessing as mp
 
 import numpy as np
 
@@ -136,6 +143,30 @@ def sort_P_r(P_r, P_index):
 
     return P_r
 
+def error_fn(model, 
+             X_train, y_train, vcv_train,
+             X_test, y_test, vcv_test_12,
+             metric, tmp_param, verbose,
+             i,j):
+
+    is_vcv =  isinstance(vcv_train, np.ndarray)
+
+    model.set_params(**tmp_param)
+    # vcv copied
+    # from init_model
+    model.fit(X_train, y_train, vcv_train)
+
+    if model.add_extraK and is_vcv:
+        tmp_err = model.score(X_test, y_test, vcv_test_12, metric =metric)*len(y_test)
+
+    else:
+        tmp_err = model.score(X_test, y_test, None, metric = metric)*len(y_test)
+
+    if verbose:
+        print(f" fold: {i}, hyperparam {j}: {tmp_param}, u: {model.psc}, alpha: {np.exp(-model.psc)}, error: {tmp_err}")
+
+    return [j, tmp_err]
+
 
 def k_fold_cv_weigthed(X, y, vcv, model, W,
                        params,
@@ -143,7 +174,8 @@ def k_fold_cv_weigthed(X, y, vcv, model, W,
                        sample = 100,
                        verbose = True,
                        seed = 12038,
-                       metric = 'log_loss'):
+                       metric = 'log_loss',
+                       cores = 5):
     """
     """
     
@@ -210,36 +242,27 @@ def k_fold_cv_weigthed(X, y, vcv, model, W,
 
         all_errors.append([init_idx, init_err])
 
-        pb = progressbar(P_r, prefix = "Evaluating hyperparameters: ", size=40) if verbose else P_r
-        # pb = progressbar(P_r, prefix = "Evaluating hyperparameters: ", size=40)
-        j = 0
-        for p_j in pb:
+        # pb = progressbar(P_r, prefix = "Evaluating hyperparameters: ", size=40) if verbose else P_r
+        with mp.Pool( processes = cores ) as pool:            
+            preout = []
+            for j, p_j in enumerate(P_r):
 
-            if j == init_idx:
-                j += 1
-                continue
+                if j == init_idx:
+                    continue
 
-            tmp_param = dict(zip(P_n, p_j))
-            
-            model.set_params(**tmp_param)
-            # vcv and spps are already copied
-            # from init_model
-            model.fit(X_train, y_train, vcv_train)
+                tmp_param = dict(zip(P_n, p_j))
+                jerr = pool.apply_async(
+                    error_fn, 
+                    (model, 
+                     X_train, y_train, vcv_train,
+                     X_test, y_test, vcv_test_12,
+                     metric, tmp_param, verbose, i, j)
+                )
+                
+                preout.append(jerr)
 
-            # tmp_err1 = model.score(X_test, y_test, vcv_test_12)*len(y_test)
-            # tmp_err2 = model.score(X_test, y_test, None)*len(y_test)
-            # tmp_err = max(tmp_err1, tmp_err2)
-
-            if model.add_extraK and is_vcv:
-                tmp_err = model.score(X_test, y_test, vcv_test_12, metric =metric)*len(y_test)
-
-            else:
-                tmp_err = model.score(X_test, y_test, None, metric = metric)*len(y_test)
-
-            if verbose:
-                print(f" fold: {i}, hyperparam {j}: {tmp_param}, alpha: {model.psc}, error: {tmp_err}")
-            all_errors.append([j, tmp_err])
-            j += 1
+            for errors in preout:
+                all_errors.append(errors.get())
 
     # O(sample*folds)
     out = {}

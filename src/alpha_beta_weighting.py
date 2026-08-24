@@ -1,6 +1,7 @@
 
 import numpy as np
-from phylokrr.treeio import parseNewickTree, is_leaf
+from phylokrr.treeio import (parseNewickTree, is_leaf, 
+                             reroot, parseTree)
 
 def split_leaves(sorted_leaves, folds):
 
@@ -50,6 +51,69 @@ def clipA(A: dict, tol = 1e-8):
 
     return A
 
+def get_matchingNode(L, num_test):
+
+    best_node = None
+    curr_dist = np.inf
+    while L:
+        v = L.pop()
+        if is_leaf(v):
+            v.b = 1
+            continue
+
+        l = v.left
+        r = v.right
+        # get clades size
+        v.b = l.b + r.b
+        d_v = np.abs(v.b - num_test)
+        if d_v < curr_dist:
+            best_node = v
+            curr_dist = d_v
+
+    return best_node
+
+# tree = "/Users/ulises/Desktop/MLab/Kernels/Kernel_sims/test_tree_v6.txt"
+# with open(tree, 'r') as f:
+#     mstr = f.readline().strip()
+# num_test = 0.3
+
+# reg_str_items = []
+# for n in L2:
+#     if is_leaf(n):
+#         reg_str_items.append(f"^{n.name}$")
+# print("(" +"|".join(reg_str_items) + ")")
+# writeT(root)
+
+# new_r = reroot(n_t, root, all_nodes)
+# print(parseTree(all_nodes, root= new_r.index))
+
+def init_split(mstr: str, num_test = 0.3):
+    """
+    mstr: newick string
+
+    return
+    ------
+        new_mstr, subtree_spps: str, list[str]
+    """
+    all_nodes, root = parseNewickTree(mstr=mstr)
+    L1 = tree_postorder(root)
+    all_spps = [n.name for n in all_nodes if is_leaf(n)]
+
+
+    # re-root at best_node
+    n_t = get_matchingNode(L1, int(len(all_spps)*num_test))
+    L2 = tree_postorder(n_t)
+    subtree_spps = [n.name for n in L2 if is_leaf(n)]
+    new_root = reroot(n_t, root, all_nodes)
+
+    if new_root is None:
+        new_mstr = mstr
+
+    else:
+        new_mstr = parseTree(all_nodes, new_root.index)
+
+    return new_mstr, subtree_spps
+
 def alpha_weighting(tree, alpha=1/4, tol = 1e-8, 
                     branch_length = False):
     """
@@ -71,17 +135,17 @@ def alpha_weighting(tree, alpha=1/4, tol = 1e-8,
             # using support attribute to store
             # weights
             if branch_length:
-                v.support = v.branch_length
+                v.b = v.branch_length
             else:
-                v.support = 1
+                v.b = 1
 
             continue
 
         l = v.left
         r = v.right
-        v.support = l.support + r.support
+        v.b = l.b + r.b
         if branch_length:
-            v.support += v.branch_length
+            v.b += v.branch_length
 
     # alpha = 1/4
     A = {}
@@ -96,8 +160,8 @@ def alpha_weighting(tree, alpha=1/4, tol = 1e-8,
 
         # nl = pa.left.branch_length
         # nr = pa.right.branch_length
-        nl = pa.left.support
-        nr = pa.right.support        
+        nl = pa.left.b
+        nr = pa.right.b
         
         pr = (nr/(nl+nr))**alpha
         pl = 1 - pr

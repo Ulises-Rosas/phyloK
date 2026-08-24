@@ -163,10 +163,6 @@ def backtracking_line_search_rij(y, w_a, u, T, Kx, d, g_d,
     b = w_a[0] # intercept
 
     def f_u_td(u_td):
-        # if u_td < -4.0 or u_td > 4.0:
-        #     print(f"Warning: u_td = {u_td} is out of bounds [-4, 4]. current u = {u}")
-        #     print(f"backtracking line search: initial step size: {t}")
-
         K_w_new = (Kx + R_u(T, u_td)) @ w
         return K_w_new + b, (lam/2)* (w.T @ K_w_new)
 
@@ -184,6 +180,41 @@ def backtracking_line_search_rij(y, w_a, u, T, Kx, d, g_d,
         #     break
     return t
 
+
+def backtracking_line_search_rij_gee(r, u, T, A_sq, d, g_d, 
+                                     phi = 1,):
+    """
+    Also known as the Armijo's rule: It makes to satisfy 
+    the first Wolfe condition. It is a sufficient decrease condition.
+    """
+    beta=1e-4
+    p=0.5
+
+    if d > 0:
+        s = ( 4.0 - u)/d
+    else:
+        s = (-4.0 - u)/d
+
+    t=min(10, s)
+
+    def f(u):
+        R = R_u(T=T, u=u, center=False)
+        V = (A_sq[:, None] * R) * A_sq * phi
+        return np.linalg.slogdet(V)[1] + r.T @ np.linalg.solve(V, r)
+
+    obj = f(u)
+
+    # k = 0
+    while f(u + t*d) > obj + (t * beta * g_d):
+        t *= p
+        if t <= 1e-7:
+            t = 0.0
+            break
+        # k += 1
+        # if k > 10:
+        #     # print(t)
+        #     break
+    return t
 
 
 def newton_raphson_step_rij(y, H, g, f_w_a, u, T, Kx, w_a, 
