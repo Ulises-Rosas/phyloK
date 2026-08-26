@@ -72,6 +72,18 @@ def get_matchingNode(L, num_test):
 
     return best_node
 
+def get_cladeSize(L):
+    while L:
+        v = L.pop()
+        if is_leaf(v):
+            v.b = 1
+            continue
+
+        l = v.left
+        r = v.right
+        # get clades size
+        v.b = l.b + r.b
+ 
 # tree = "/Users/ulises/Desktop/MLab/Kernels/Kernel_sims/test_tree_v6.txt"
 # with open(tree, 'r') as f:
 #     mstr = f.readline().strip()
@@ -87,7 +99,7 @@ def get_matchingNode(L, num_test):
 # new_r = reroot(n_t, root, all_nodes)
 # print(parseTree(all_nodes, root= new_r.index))
 
-def init_split(mstr: str, num_test = 0.3):
+def init_split(mstr: str, num_test = 0.3, use_root = True):
     """
     mstr: newick string
 
@@ -97,20 +109,21 @@ def init_split(mstr: str, num_test = 0.3):
     """
     all_nodes, root = parseNewickTree(mstr=mstr)
     L1 = tree_postorder(root)
-    all_spps = [n.name for n in all_nodes if is_leaf(n)]
-
-
-    # re-root at best_node
-    n_t = get_matchingNode(L1, int(len(all_spps)*num_test))
-    L2 = tree_postorder(n_t)
-    subtree_spps = [n.name for n in L2 if is_leaf(n)]
-    new_root = reroot(n_t, root, all_nodes)
-
-    if new_root is None:
-        new_mstr = mstr
+    
+    if use_root:
+        get_cladeSize(L1)
+        n_t = root.left if root.left.b <= root.right.b else root.right
 
     else:
-        new_mstr = parseTree(all_nodes, new_root.index)
+        all_spps = [n.name for n in all_nodes if is_leaf(n)]
+        n_t = get_matchingNode(L1, int(len(all_spps)*num_test))
+
+    # re-root at best_node
+    L2 = tree_postorder(n_t)
+    subtree_spps = [n.name for n in L2 if is_leaf(n)]
+    new_root = reroot(n_t, root, all_nodes) if not use_root else None
+    # "("+"|".join([f"^{i}$" for i in subtree_spps]) + ")"
+    new_mstr = mstr if new_root is None else parseTree(all_nodes, new_root.index)
 
     return new_mstr, subtree_spps
 

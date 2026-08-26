@@ -998,7 +998,7 @@ class KRGEE:
         if isinstance(f_new, np.ndarray) and isinstance(f_curr, np.ndarray):
             max_updt = np.linalg.norm(f_new - f_curr, ord = np.inf)
             w_max    = np.linalg.norm(f_new, ord = np.inf)
-            if w_max == 0 or max_updt/w_max < self.tol:
+            if w_max == 0.0 or max_updt/w_max <= self.tol:
                 if self.verbose:
                     print(f"f update is below the tolerance threshold (iter. {i})")
                 return True
@@ -1008,7 +1008,7 @@ class KRGEE:
             w_max = np.abs(f_new)
             # w_max = np.abs(f_curr) + 1
 
-            if max_updt/w_max < self.tol:
+            if max_updt/w_max <= self.tol:
                 if self.verbose:
                     print(f"f update is below the tolerance threshold (iter. {i})")
                 return True

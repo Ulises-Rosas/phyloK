@@ -1,9 +1,10 @@
-# import os
-# os.environ["OMP_NUM_THREADS"] = "1"
-# os.environ["MKL_NUM_THREADS"] = "1"
-# os.environ["OPENBLAS_NUM_THREADS"] = "1"
-# os.environ["VECLIB_MAXIMUM_THREADS"] = "1"
-# os.environ["NUMEXPR_NUM_THREADS"] = "1"
+import os
+os.environ["OMP_NUM_THREADS"] = "1"
+os.environ["MKL_NUM_THREADS"] = "1"
+os.environ["OPENBLAS_NUM_THREADS"] = "1"
+os.environ["VECLIB_MAXIMUM_THREADS"] = "1"
+os.environ["NUMEXPR_NUM_THREADS"] = "1"
+
 import time
 from collections import deque
 import multiprocessing as mp
@@ -242,8 +243,22 @@ def k_fold_cv_weigthed(X, y, vcv, model, W,
 
         all_errors.append([init_idx, init_err])
 
-        # pb = progressbar(P_r, prefix = "Evaluating hyperparameters: ", size=40) if verbose else P_r
-        with mp.Pool( processes = cores ) as pool:            
+        # preout = []
+        # for j, p_j in enumerate(P_r):
+        #     if j == init_idx:
+        #         continue
+
+        #     tmp_param = dict(zip(P_n, p_j))
+        #     jerr = error_fn(model, 
+        #             X_train, y_train, vcv_train,
+        #             X_test, y_test, vcv_test_12,
+        #             metric, tmp_param, verbose, i, j)
+        #     preout.append(jerr)
+
+        # for errors in preout:
+        #     all_errors.append(errors)
+
+        with mp.Pool( processes = cores ) as pool:
             preout = []
             for j, p_j in enumerate(P_r):
 
@@ -254,9 +269,9 @@ def k_fold_cv_weigthed(X, y, vcv, model, W,
                 jerr = pool.apply_async(
                     error_fn, 
                     (model, 
-                     X_train, y_train, vcv_train,
-                     X_test, y_test, vcv_test_12,
-                     metric, tmp_param, verbose, i, j)
+                    X_train, y_train, vcv_train,
+                    X_test, y_test, vcv_test_12,
+                    metric, tmp_param, verbose, i, j)
                 )
                 
                 preout.append(jerr)
@@ -286,5 +301,9 @@ def k_fold_cv_weigthed(X, y, vcv, model, W,
     model.copy_R_inv = False
     # let the model start with new alpha
     model.warm_start = False
-    
+    # os.environ["OPENBLAS_NUM_THREADS"] = str(os.cpu_count())
+    # os.environ["OMP_NUM_THREADS"] = str(os.cpu_count())
+    # os.environ["MKL_NUM_THREADS"] = str(os.cpu_count())
+    # os.environ["VECLIB_MAXIMUM_THREADS"] = str(os.cpu_count())
+    # os.environ["NUMEXPR_NUM_THREADS"] = str(os.cpu_count())  
     return best_
