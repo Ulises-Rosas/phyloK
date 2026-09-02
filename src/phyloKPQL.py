@@ -3,9 +3,11 @@ from numpy import linalg as la
 
 from phylokrr_dev.opt import (newton_raphson_step, R_u, 
                               backtracking_line_search_rij,
-                              backtracking_line_search_rij_gee)
+                              backtracking_line_search_rij_gee,
+                              BFGS_step2)
 from phylokrr.kernels import linear_kernel
 # from phylokrr_dev.opt import *
+from scipy.optimize import minimize
 
 RED = "\033[31m"
 RESET = "\033[0m"
@@ -589,6 +591,134 @@ class KRGEE:
 
         self.psc = u_curr
 
+    def opt_rij_QN(self, y, T, Kx, uc = 1):
+        """
+        Optimize the phylogenetic correlation parameter using gradient descent
+        using Quasi-Newton method (L-BFGS-B)
+        """
+        n = y.shape[0]
+        w = self.alpha[1:]
+        bias = self.alpha[0]
+
+        def nabla_f(u_curr):
+            dR, R = self.dR_R(u_curr, T)
+
+            f_w = (Kx + R) @ w
+            f_curr = f_w + bias
+
+            Du, u = self.get_Du(f_curr)
+            V_Inv = self.get_V_Inv(f_curr)
+            DuDa  = (Du[:,None] * dR) @ w
+
+            if self.add_extraK:
+                DuDaT_V = DuDa.T * np.diag(V_Inv) # O(n^2)
+            else:
+                DuDaT_V = np.matmul(DuDa.T, V_Inv) # O(n^3)
+
+            dp1 = (self.lam/2.) * (w.T @ dR @ w)
+            g = -(1/n)*(DuDaT_V @ (y - u)) + dp1
+            return g
+
+        def f(u_curr):
+            R_uc  = R_u(T, u_curr, center = False)
+            R = self.center_kernel(R_uc, save_means=False)
+            f_w = (Kx + R) @ w # O(n^2)
+            f_curr = f_w + bias
+            p = (self.lam/2.) * (w.T @ f_w)
+            obj = self.Obj(y, f_curr, p)
+            return obj
+
+        result = minimize(
+                    fun=f, 
+                    x0=uc, 
+                    method='L-BFGS-B',
+                    tol = self.tol,
+                    options={ 'maxiter': self.max_iter },
+                    jac=nabla_f,
+                    bounds=[(-4.0, 4.0)] 
+                )
+
+        self.psc = result.x[0]
+        conv = result.success
+        if not conv:
+            print(f"{RED}No convergence after %i iterations {RESET}" % self.max_iter)
+            print(f"curr. alpha: {np.exp(-self.psc)}")
+
+    def opt_weights_QN(self, K, y, Kx = None):
+
+        self.verbose = True
+
+        n = y.shape[0]
+        p = K.shape[1] if K is not None else 0
+        K_dtype = K.dtype if K is not None else float
+
+        ones = np.ones(n, dtype=K_dtype)
+        
+        if p > 0:
+            K_0 = np.zeros((n + 1, p + 1), dtype=K_dtype)
+            K_x = K if Kx is None else Kx
+            K_0[1:, 1:] = K_x
+            lK_0 = self.lam * K_0
+
+        else:
+            lK_0 = np.array([[0]], dtype=K_dtype)
+
+
+        # concatenate ones to K for intercept
+        K_a = np.column_stack((ones, K)) if p > 0 else ones.reshape(-1, 1)
+        K_a = np.asfortranarray(K_a, dtype=K_dtype)
+
+        if not self.warm_start or np.any(np.isnan(self.alpha)):
+            self.alpha = np.zeros(p + 1) # alpha weights
+            self.alpha = np.ascontiguousarray(self.alpha, dtype=K_dtype)
+            self.phi = 1
+
+        assert len(self.alpha) > 0, "The model needs to be fitted first"
+
+        def nabla_f(w_a):
+            f_curr = K_a @ w_a
+            # get derivatives of \mu and \mu
+            Du, u = self.get_Du(f_curr)
+            V_Inv = self.get_V_Inv(f_curr) # O(n^2)
+    
+            DuDa = Du[:,None] * K_a # O(n^2)
+
+            if self.add_extraK:
+                # V_inv is diagonal
+                DuDaT_V = DuDa.T * np.diag(V_Inv) # O(n^2)
+            else:
+                DuDaT_V = np.matmul(DuDa.T, V_Inv) # O(n^3)
+
+            # gradient
+            g = (-1/n)*(DuDaT_V @ (y - u)) + lK_0 @ w_a # O(n^2)
+            return g
+
+        def f(w_a):
+            f_curr = K_a @ w_a
+            p = (self.lam/2.) * (w_a[1:].T @ K_a[:,1:] @ w_a[1:])
+            return self.Obj(y, f_curr, p = p)
+
+        # O(n^2) complexity mostly due to nabla_f and f evaluations
+        # the optimization itself is O(nm) where m is the history size of the L-BFGS-B algorithm
+        # by default m = 10, so the overall complexity is O(n^2)
+        result = minimize(
+                    fun=f, 
+                    x0=self.alpha, 
+                    method='L-BFGS-B',
+                    tol = self.tol,
+                    options={ 'maxiter': self.max_iter },
+                    jac=nabla_f,
+                )
+        
+        conv = result.success
+        self.alpha = result.x
+        self.f_curr = K_a @ self.alpha
+        self.y = y.copy()
+
+        if not conv:
+            print(f"{RED}No convergence after %i iterations {RESET}" % self.max_iter)
+            print("gamma, phi, lam:")
+            print(self.gamma, self.phi, self.lam)
 
     def opt_weights(self, K, y, Kx = None):
 
@@ -620,26 +750,34 @@ class KRGEE:
             self.phi = 1
 
         assert len(self.alpha) > 0, "The model needs to be fitted first"
-    
-        f_curr = K_a @ self.alpha
-        conv = False
-        for i in range(self.max_iter):
+
+        def get_grad_Hessian(f_curr, w_a):
             # get derivatives of \mu and \mu
-            
             Du, u = self.get_Du(f_curr)
             V_Inv = self.get_V_Inv(f_curr) # O(n^2)
     
             DuDa = Du[:,None] * K_a # O(n^2)
-            DuDaT_V = np.matmul(DuDa.T, V_Inv) # O(n^3)
-            DuDaT_V_DuDa = np.matmul(DuDaT_V, DuDa) # O(n^3)
 
-            H = (1/n)*(DuDaT_V_DuDa) + lK_0 # O(n^2)
+            if self.add_extraK:
+                # V_inv is diagonal
+                DuDaT_V = DuDa.T * np.diag(V_Inv) # O(n^2)
+            else:
+                DuDaT_V = np.matmul(DuDa.T, V_Inv) # O(n^3)   
+
             self.r = y - u # O(n)
 
             # gradient
-            G =  (-1/n)*(DuDaT_V @ self.r) + lK_0 @ self.alpha # O(n^2)
+            g =  (-1/n)*(DuDaT_V @ self.r) + lK_0 @ w_a # O(n^2)
+            DuDaT_V_DuDa = np.matmul(DuDaT_V, DuDa) # O(n^3)
+            H = (1/n)*(DuDaT_V_DuDa) + lK_0 # O(n^2)
+            return H, g
 
-            self.alpha, lam_sq = newton_raphson_step(
+        f_curr = K_a @ self.alpha
+        conv = False
+        for i in range(self.max_iter):
+
+            H, G = get_grad_Hessian(f_curr, self.alpha)
+            lam_sq = newton_raphson_step(
                 y, H, G, K_a, K_x, self.alpha, self.hessian_tol,
                 dist=self.reg, phi = self.phi, lam=self.lam
             )
@@ -723,45 +861,6 @@ class KRGEE:
 
         return self.Obj(y, f_curr, p = p)
 
-    def decoupleR(self, y, X, vcv):
-        self.Rnn = R_u(vcv, self.psc, center = False)
-
-        K_x_uc = self.get_K(X, X, center = False)
-        K_x = self.center_kernel(K_x_uc, save_means = False)
-
-        self.K_train = self.center_kernel(K_x_uc + self.Rnn, save_means = True)
-        self.opt_weights(self.K_train, y, Kx = K_x)
-        # self.opt_rij_gradient_descent(y, T = vcv, Kx = K_x, uc = self.psc)
-        self.opt_rij_alpha(y, T = vcv, Kx = K_x, uc = self.psc)
-
-        self.update_K_train(u_new = self.psc, T = vcv, K_x_uc = K_x_uc)
-
-        curr_score = self.get_new_score(K_x, y)
-
-        # let re-use alpha weights from the previous 
-        # step to speed up convergence
-        for i in range(self.max_iter):
-            self.opt_weights(self.K_train, y, Kx=K_x) # update weights
-            # self.opt_rij_gradient_descent(y, T=vcv, Kx=K_x, uc=self.psc)
-            self.opt_rij_alpha(y, T = vcv, Kx = K_x, uc = self.psc)
-
-            self.update_K_train(u_new=self.psc, T=vcv, K_x_uc=K_x_uc)
-            new_score = self.get_new_score(K_x, y)
-
-            lam_sq = curr_score - new_score
-            if lam_sq/2 < self.tol:
-                print(f"Alternate iteration {i + 1}: new score = {new_score}, old score = {curr_score}")
-                print()
-                break
-
-            if new_score < -4*y.shape[0]:
-                # since it is a minimization problem, a very low score 
-                # indicates that the model is not converging. However
-                print("Warning: new score is already very well optimized")
-                break
-
-            curr_score = new_score
-
     def fullK_opt(self, y, X, vcv):
         self.Rnn = R_u(vcv, self.psc, center = False)
 
@@ -770,37 +869,35 @@ class KRGEE:
 
         self.K_train = self.center_kernel(K_x_uc + self.Rnn, save_means = True)
 
-        self.opt_weights(self.K_train, y, Kx = None)
-        self.opt_rij_gd_fullK(y, T = vcv, Kx = K_x, uc = self.psc)
-        # self.opt_rij_bracketing(y, T = vcv, Kx = K_x, a = -5, b = 5, n = bracketing_n)
-
+        # self.opt_weights(self.K_train, y, Kx = None)
+        # self.opt_rij_gd_fullK(y, T = vcv, Kx = K_x, uc = self.psc)
+        self.opt_weights_QN(self.K_train, y, Kx = None)
+        self.opt_rij_QN(y, T = vcv, Kx = K_x, uc = self.psc)
         self.update_K_train(u_new = self.psc, T = vcv, K_x_uc = K_x_uc)
 
         curr_score = self.get_new_score(None, y)
         curr_vals = np.hstack((self.f_curr, self.psc))
 
-
         self.warm_start = True
         conv = False
         for i in range(self.max_iter):
-            self.opt_weights(self.K_train, y, Kx=None) # update weights
-            # print(f"{i + 1}. psc before opt:", self.psc)
-            self.opt_rij_gd_fullK(y, T=vcv, Kx=K_x, uc=self.psc)
-            # self.opt_rij_bracketing(y, T = vcv, Kx = K_x, a = -5, b = 5, n =bracketing_n)
-            # print(f"{i + 1}. psc after opt:", self.psc)
-
+            # self.opt_weights(self.K_train, y, Kx=None) # update weights
+            # self.opt_rij_gd_fullK(y, T=vcv, Kx=K_x, uc=self.psc)
+            self.opt_weights_QN(self.K_train, y, Kx=None) # update weights
+            self.opt_rij_QN(y, T=vcv, Kx=K_x, uc=self.psc)
             self.update_K_train(u_new=self.psc, T=vcv, K_x_uc=K_x_uc)
 
             new_score = self.get_new_score(None, y)
             new_vals = np.hstack((self.f_curr, self.psc))
 
-            lam_sq = curr_score - new_score
+            lam_sq = 2*(curr_score - new_score)
             if self.check_convergence(new_vals, curr_vals, 
                                       g_norm=self.grad_tol*2, 
                                       lam2=lam_sq, 
                                       i = i + 1):
                 if self.verbose:
-                    print(f"Converged at iteration {i + 1}, phylogenetic correlation parameter: {self.psc}, new score: {new_score}, old score: {curr_score}, alpha: {np.exp(-self.psc)}")
+                    print(f"Converged at iteration {i + 1}, phylogenetic correlation parameter: {self.psc},\
+                           new score: {new_score}, old score: {curr_score}, alpha: {np.exp(-self.psc)}")
                 # print("converged.")
                 # print()
                 conv = True
@@ -1671,4 +1768,44 @@ class Logistic(KRGEE):
 
     #     # self.krgee_fit(self.K_train, y)
     #     self.opt_weights(self.K_train, y)
+
+    # def decoupleR(self, y, X, vcv):
+    #     self.Rnn = R_u(vcv, self.psc, center = False)
+
+    #     K_x_uc = self.get_K(X, X, center = False)
+    #     K_x = self.center_kernel(K_x_uc, save_means = False)
+
+    #     self.K_train = self.center_kernel(K_x_uc + self.Rnn, save_means = True)
+    #     self.opt_weights(self.K_train, y, Kx = K_x)
+    #     # self.opt_rij_gradient_descent(y, T = vcv, Kx = K_x, uc = self.psc)
+    #     self.opt_rij_alpha(y, T = vcv, Kx = K_x, uc = self.psc)
+
+    #     self.update_K_train(u_new = self.psc, T = vcv, K_x_uc = K_x_uc)
+
+    #     curr_score = self.get_new_score(K_x, y)
+
+    #     # let re-use alpha weights from the previous 
+    #     # step to speed up convergence
+    #     for i in range(self.max_iter):
+    #         self.opt_weights(self.K_train, y, Kx=K_x) # update weights
+    #         # self.opt_rij_gradient_descent(y, T=vcv, Kx=K_x, uc=self.psc)
+    #         self.opt_rij_alpha(y, T = vcv, Kx = K_x, uc = self.psc)
+
+    #         self.update_K_train(u_new=self.psc, T=vcv, K_x_uc=K_x_uc)
+    #         new_score = self.get_new_score(K_x, y)
+
+    #         lam_sq = curr_score - new_score
+    #         if lam_sq/2 < self.tol:
+    #             print(f"Alternate iteration {i + 1}: new score = {new_score}, old score = {curr_score}")
+    #             print()
+    #             break
+
+    #         if new_score < -4*y.shape[0]:
+    #             # since it is a minimization problem, a very low score 
+    #             # indicates that the model is not converging. However
+    #             print("Warning: new score is already very well optimized")
+    #             break
+
+    #         curr_score = new_score
+
 #endregion

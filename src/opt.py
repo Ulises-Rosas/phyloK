@@ -74,14 +74,11 @@ def backtracking_line_search(y, w_a, K_a, Kx, d, g_d,
     # l/2 * (w_a + t*d)^T K_0 (w_a + t*d)
     #  = l/2 * (w + t*d_w)^T K_p (w + t*d_w)
     #  = l/2 * (  t^2 * d_w.T K_p d_w + 2t w.T K_p d_w + w.T K_p w )
-    #  = l/2 * (  t^2 * c1 + 2t * c2  + c3)  
+    #  = l/2 * (  t^2 * c1            + 2t * c2        +    c3     )  
     #  PEnalized term
 
     c1 = d_w.T @ Kx @ d_w
-    # c1 = d_w.T @ (k_ad - d_b)
-
     c2 = w.T @ Kx @ d_w
-    # c2 = d_w.T @ (f_w_a - b) # d_w.T ( 1b + Kw - 1b)
 
     # since w.T K_p w is present on both sides of the inequality, 
     # it can be removed from the backtracking line search condition
