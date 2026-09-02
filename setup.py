@@ -4,7 +4,8 @@ import setuptools
 from distutils.core import setup
 
 dependencies = [
-    "numpy"
+    "numpy",
+    "scipy"
 ]
 
 with open('README.md') as readme_file:
