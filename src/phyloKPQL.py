@@ -3,10 +3,8 @@ from numpy import linalg as la
 
 from phylokrr_dev.opt import (newton_raphson_step, R_u, 
                               backtracking_line_search_rij,
-                              backtracking_line_search_rij_gee,
-                              BFGS_step2)
+                              backtracking_line_search_rij_gee)
 from phylokrr.kernels import linear_kernel
-# from phylokrr_dev.opt import *
 from scipy.optimize import minimize
 
 RED = "\033[31m"
