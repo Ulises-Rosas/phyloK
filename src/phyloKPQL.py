@@ -5,7 +5,7 @@ from phylokrr_dev.opt import (newton_raphson_step, R_u,
                               backtracking_line_search_rij,
                               backtracking_line_search_rij_gee)
 from phylokrr.kernels import linear_kernel
-from scipy.optimize import minimize
+from scipy.optimize import minimize, fmin_l_bfgs_b
 
 RED = "\033[31m"
 RESET = "\033[0m"
@@ -62,6 +62,7 @@ class KRGEE:
         self.reg = 'continous'
         self.process = "BM"
         self.inv_calculated = False
+        self.use_quasi_newton = False
         
         self.Rnn = None
 
@@ -380,7 +381,7 @@ class KRGEE:
         with respect to f(x).
 
 
-        Wii = \\frac{\partial \mu}{\partial f(x)}
+        Wii = \frac{\partial \mu}{\partial f(x)}
         if \mu is the identity function, then Wii = 1
 
 
@@ -485,9 +486,13 @@ class KRGEE:
         np.ndarray
             V^(-1/2)
         """
-        A_sqInv = self.Vu_func(f_curr)**(-1/2)
-        V_Inv  = (A_sqInv[:, None] * self.R_inv) * A_sqInv
-        V_Inv *= (self.phi)**(-1) # O(n^2)    
+        if not self.add_extraK:
+            A_sqInv = self.Vu_func(f_curr)**(-1/2)
+            V_Inv  = (A_sqInv[:, None] * self.R_inv) * A_sqInv
+        else:
+            V_Inv = self.Vu_func(f_curr)**(-1)
+
+        V_Inv *= (self.phi)**(-1) # O(n^2)
         return V_Inv
 
 
@@ -536,7 +541,10 @@ class KRGEE:
             Du, u   = self.get_Du(f_curr)
             V_Inv   = self.get_V_Inv(f_curr)
             DuDa    = (Du[:,None] * dR) @ w
-            DuDaT_V = np.matmul(DuDa.T, V_Inv)
+            if self.add_extraK:
+                DuDaT_V = DuDa.T * V_Inv # O(n^2)
+            else:
+                DuDaT_V = np.matmul(DuDa.T, V_Inv)
 
             dp1 = (self.lam/2.) * (w.T @ dR @ w)
             dp2 = (self.lam/2.) * (w.T @ ddR @ w)
@@ -588,7 +596,7 @@ class KRGEE:
             print(f"curr. alpha: {np.exp(-u_curr)}")
 
         self.psc = u_curr
-
+    # region: quasi-newton optimization
     def opt_rij_QN(self, y, T, Kx, uc = 1):
         """
         Optimize the phylogenetic correlation parameter using gradient descent
@@ -609,7 +617,8 @@ class KRGEE:
             DuDa  = (Du[:,None] * dR) @ w
 
             if self.add_extraK:
-                DuDaT_V = DuDa.T * np.diag(V_Inv) # O(n^2)
+                # DuDaT_V = DuDa.T * np.diag(V_Inv) # O(n^2)
+                DuDaT_V = DuDa.T * V_Inv # O(n^2)
             else:
                 DuDaT_V = np.matmul(DuDa.T, V_Inv) # O(n^3)
 
@@ -664,7 +673,7 @@ class KRGEE:
 
         # concatenate ones to K for intercept
         K_a = np.column_stack((ones, K)) if p > 0 else ones.reshape(-1, 1)
-        K_a = np.asfortranarray(K_a, dtype=K_dtype)
+        K_a = np.ascontiguousarray(K_a, dtype=K_dtype)
 
         if not self.warm_start or np.any(np.isnan(self.alpha)):
             self.alpha = np.zeros(p + 1) # alpha weights
@@ -673,7 +682,7 @@ class KRGEE:
 
         assert len(self.alpha) > 0, "The model needs to be fitted first"
 
-        def nabla_f(w_a):
+        def nabla_f(w_a: np.ndarray) -> np.ndarray:
             f_curr = K_a @ w_a
             # get derivatives of \mu and \mu
             Du, u = self.get_Du(f_curr)
@@ -683,15 +692,18 @@ class KRGEE:
 
             if self.add_extraK:
                 # V_inv is diagonal
-                DuDaT_V = DuDa.T * np.diag(V_Inv) # O(n^2)
+                # DuDaT_V = DuDa.T * np.diag(V_Inv) # O(n^2)
+                # print("V_Inv shape: ", V_Inv.shape)
+                DuDaT_V = DuDa.T * V_Inv # O(n^2)
             else:
+                # print("V_Inv shape: ", V_Inv.shape)
                 DuDaT_V = np.matmul(DuDa.T, V_Inv) # O(n^3)
 
             # gradient
             g = (-1/n)*(DuDaT_V @ (y - u)) + lK_0 @ w_a # O(n^2)
             return g
 
-        def f(w_a):
+        def f(w_a: np.ndarray) -> float:
             f_curr = K_a @ w_a
             p = (self.lam/2.) * (w_a[1:].T @ K_a[:,1:] @ w_a[1:])
             return self.Obj(y, f_curr, p = p)
@@ -717,6 +729,7 @@ class KRGEE:
             print(f"{RED}No convergence after %i iterations {RESET}" % self.max_iter)
             print("gamma, phi, lam:")
             print(self.gamma, self.phi, self.lam)
+    # endregion
 
     def opt_weights(self, K, y, Kx = None):
 
@@ -740,7 +753,7 @@ class KRGEE:
 
         # concatenate ones to K for intercept
         K_a = np.column_stack((ones, K)) if p > 0 else ones.reshape(-1, 1)
-        K_a = np.asfortranarray(K_a, dtype=K_dtype)
+        K_a = np.ascontiguousarray(K_a, dtype=K_dtype)
 
         if not self.warm_start or np.any(np.isnan(self.alpha)):
             self.alpha = np.zeros(p + 1) # alpha weights
@@ -758,7 +771,8 @@ class KRGEE:
 
             if self.add_extraK:
                 # V_inv is diagonal
-                DuDaT_V = DuDa.T * np.diag(V_Inv) # O(n^2)
+                # DuDaT_V = DuDa.T * np.diag(V_Inv) # O(n^2)
+                DuDaT_V = DuDa.T * V_Inv # O(n^2)
             else:
                 DuDaT_V = np.matmul(DuDa.T, V_Inv) # O(n^3)   
 
@@ -859,6 +873,7 @@ class KRGEE:
 
         return self.Obj(y, f_curr, p = p)
 
+    # region: alternating optimization
     def fullK_opt(self, y, X, vcv):
         self.Rnn = R_u(vcv, self.psc, center = False)
 
@@ -867,10 +882,15 @@ class KRGEE:
 
         self.K_train = self.center_kernel(K_x_uc + self.Rnn, save_means = True)
 
-        # self.opt_weights(self.K_train, y, Kx = None)
-        # self.opt_rij_gd_fullK(y, T = vcv, Kx = K_x, uc = self.psc)
-        self.opt_weights_QN(self.K_train, y, Kx = None)
-        self.opt_rij_QN(y, T = vcv, Kx = K_x, uc = self.psc)
+
+        if self.use_quasi_newton:
+            self.opt_weights_QN(self.K_train, y, Kx = None)
+            self.opt_rij_QN(y, T = vcv, Kx = K_x, uc = self.psc)
+            
+        else:
+            self.opt_weights(self.K_train, y, Kx = None)
+            self.opt_rij_gd_fullK(y, T = vcv, Kx = K_x, uc = self.psc)
+
         self.update_K_train(u_new = self.psc, T = vcv, K_x_uc = K_x_uc)
 
         curr_score = self.get_new_score(None, y)
@@ -879,16 +899,20 @@ class KRGEE:
         self.warm_start = True
         conv = False
         for i in range(self.max_iter):
-            # self.opt_weights(self.K_train, y, Kx=None) # update weights
-            # self.opt_rij_gd_fullK(y, T=vcv, Kx=K_x, uc=self.psc)
-            self.opt_weights_QN(self.K_train, y, Kx=None) # update weights
-            self.opt_rij_QN(y, T=vcv, Kx=K_x, uc=self.psc)
+
+            if self.use_quasi_newton:
+                self.opt_weights_QN(self.K_train, y, Kx=None) # update weights
+                self.opt_rij_QN(y, T=vcv, Kx=K_x, uc=self.psc)
+            else:
+                self.opt_weights(self.K_train, y, Kx=None) # update weights
+                self.opt_rij_gd_fullK(y, T=vcv, Kx=K_x, uc=self.psc)
+
             self.update_K_train(u_new=self.psc, T=vcv, K_x_uc=K_x_uc)
 
             new_score = self.get_new_score(None, y)
             new_vals = np.hstack((self.f_curr, self.psc))
 
-            lam_sq = 2*(curr_score - new_score)
+            lam_sq = 2*(curr_score - new_score)/max([abs(curr_score), abs(new_score),1]) # a la scipy.minimize tol
             if self.check_convergence(new_vals, curr_vals, 
                                       g_norm=self.grad_tol*2, 
                                       lam2=lam_sq, 
@@ -905,7 +929,7 @@ class KRGEE:
         if not conv:
             print(f"{RED}No convergence. phylogenetic correlation parameter: {self.psc}, new score: {new_score}, old score: {curr_score}, alpha: {np.exp(-self.psc)}{RESET}")
         self.warm_start = False
-
+    # endregion: alternating optimization
 
     def opt_R_ls(self, u, T):
 
@@ -1104,6 +1128,7 @@ class KRGEE:
             # w_max = np.abs(f_curr) + 1
 
             if max_updt/w_max <= self.tol:
+            # if max_updt/max(w_max,1) <= self.tol:                
                 if self.verbose:
                     print(f"f update is below the tolerance threshold (iter. {i})")
                 return True

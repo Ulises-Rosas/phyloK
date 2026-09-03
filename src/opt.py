@@ -116,7 +116,7 @@ def newton_raphson_step(y, H, G, K_a = None, Kx = None, w_a = None,
                                     lam=lam, dist=dist, phi=phi)
     w_a += (step*d)
 
-    return w_a, -g_d
+    return -g_d
 
 def R_u(T, u, center = True):
     """
