@@ -165,16 +165,16 @@ def backtracking_line_search_rij(y, w_a, u, T, Kx, d, g_d,
 
     obj = Obj(y, f_u_td(u), 0, dist=dist, phi=phi)
 
-    k = 0
+    # k = 0
     while Obj(y, f_u_td(u + t*d), 0, dist=dist, phi=phi) > obj + (t * beta * g_d):
         t *= p
         if t <= 1e-7:
-            t = .0
+            t = 1e-7
             break
         # k += 1
         # if k > 10:
         #     # print(t)
-        #     break
+            # break
     return t
 
 

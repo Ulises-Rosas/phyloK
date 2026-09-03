@@ -5,7 +5,7 @@ from phylokrr_dev.opt import (newton_raphson_step, R_u,
                               backtracking_line_search_rij,
                               backtracking_line_search_rij_gee)
 from phylokrr.kernels import linear_kernel
-from scipy.optimize import minimize, fmin_l_bfgs_b
+from scipy.optimize import minimize
 
 RED = "\033[31m"
 RESET = "\033[0m"
