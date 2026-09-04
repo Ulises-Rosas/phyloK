@@ -582,7 +582,7 @@ class KRGEE:
             if self.check_convergence(u_new, u_curr, 
                                       g_norm = np.abs(g), 
                                       lam2 = lam_sq,
-                                      i = i):
+                                      i = i + 1):
                 if self.verbose:
                     print(f"Converge for r (iter. {i + 1})")
                     # print("---- CURR OBJ:", curr_obj)
@@ -930,15 +930,16 @@ class KRGEE:
             new_Kw = self.f_curr.copy()
             new_sig = self.psc
 
-            lam_sq = 2*(curr_score - new_score)/max([abs(curr_score), abs(new_score), 1]) # a la scipy.minimize tol
+            lam_sq = 2*abs(curr_score - new_score)/max([abs(curr_score), abs(new_score), 1]) # a la scipy.minimize tol
+            # lam_sq = 2*abs(curr_score - new_score)
             if self.check_convergence(new_sig, curr_sig, 
                                       g_norm=self.grad_tol*2, 
                                       lam2=lam_sq, 
-                                      i = i) or\
+                                      i = i + 1) and  \
                 self.check_convergence(new_Kw, curr_Kw, 
                                       g_norm=self.grad_tol*2, 
                                       lam2=lam_sq, 
-                                      i = i):
+                                      i = i + 1):
                 if self.verbose:
                     print(f"Converged at iteration {i + 1}, phylogenetic correlation parameter: {self.psc},\
                             new score: {new_score}, old score: {curr_score}, alpha: {np.exp(-self.psc)}")
@@ -1148,7 +1149,7 @@ class KRGEE:
 
         else:
             max_updt = np.abs(f_new - f_curr)
-            w_max = np.abs(f_new)
+            w_max = max([np.abs(f_new), np.abs(f_curr), 1])
             # w_max = np.abs(f_curr) + 1
 
             if max_updt/w_max <= self.tol:
