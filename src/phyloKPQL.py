@@ -63,6 +63,7 @@ class KRGEE:
         self.process = "BM"
         self.inv_calculated = False
         self.use_quasi_newton = False
+        self.memory_qn = 10
         
         self.Rnn = None
 
@@ -641,7 +642,7 @@ class KRGEE:
                     x0=uc, 
                     method='L-BFGS-B',
                     tol = self.tol,
-                    options={ 'maxiter': self.max_iter },
+                    options={ 'maxiter': self.max_iter, 'maxcor': self.memory_qn },
                     jac=nabla_f,
                     bounds=[(-4.0, 4.0)] 
                 )
@@ -716,8 +717,9 @@ class KRGEE:
                     fun=f, 
                     x0=self.alpha, 
                     method='L-BFGS-B',
+                    # method='BFGS',
                     tol = self.tol,
-                    options={ 'maxiter': self.max_iter },
+                    options={ 'maxiter': self.max_iter, 'maxcor': self.memory_qn },
                     jac=nabla_f,
                 )
         
@@ -727,9 +729,9 @@ class KRGEE:
         self.y = y.copy()
 
         if not conv:
-            print(f"{RED}No convergence after %i iterations {RESET}" % self.max_iter)
-            print("gamma, phi, lam:")
-            print(self.gamma, self.phi, self.lam)
+            print(f"{RED}No convergence for weights after %i iterations {RESET}" % self.max_iter)
+            print(f"{RED}gamma, phi, lam:, {self.gamma}, {self.phi}, {self.lam}{RESET}")
+            print(f"{RED}first 4 weights: {self.alpha[:4]}{RESET}")
     # endregion
 
     def opt_weights(self, K, y, Kx = None):
