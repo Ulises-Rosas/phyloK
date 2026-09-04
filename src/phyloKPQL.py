@@ -560,7 +560,6 @@ class KRGEE:
         conv = False
         for i in range(self.max_iter):
             g, H, curr_obj = grad_Hessian_wrt_u(u_curr)
-            # print(f"Iter{i + 1}  ===== g: %f, H: %f, H^-1: %f, u_curr: {u_curr}, alpha: {np.exp(-u_curr)}" %(g, H, H**(-1)))
 
             d = -g/H if H > 0.0 else -g
             g_d = g * d
@@ -578,6 +577,7 @@ class KRGEE:
                 new_obj = self.Obj(y, f_w_new + bias, (self.lam/2.) * (w.T @ f_w_new))
                 lam_sq = 2*(curr_obj - new_obj)
 
+            # print(f"Iter{i + 1}  ===== g: %f, H: %f, H^-1: %f, d: %f, u_curr: {u_curr}, u_new: {u_new}, alpha: {np.exp(-u_curr)}" %(g, H, H**(-1), d))
             if self.check_convergence(u_new, u_curr, 
                                       g_norm = np.abs(g), 
                                       lam2 = lam_sq,
@@ -592,8 +592,9 @@ class KRGEE:
             u_curr = u_new
 
         if not conv:
-            print(f"{RED}No convergence after %i iterations {RESET}" % self.max_iter)
-            print(f"curr. alpha: {np.exp(-u_curr)}")
+            print(f"{RED}No convergence after %i iterations, curr. alpha %f {RESET}" % (self.max_iter, np.exp(-u_curr)))
+            print(f"grad: %f, Hessian: %f, H^-1: %f, u_curr: {u_curr}, alpha: {np.exp(-u_curr)}" %(g, H, H**(-1)))
+            # print(f"{RED}curr. alpha : {np.exp(-u_curr)}{RESET}")
 
         self.psc = u_curr
     # region: quasi-newton optimization
@@ -802,7 +803,7 @@ class KRGEE:
                                       g_norm = np.linalg.norm(G, ord=2), 
                                       lam2 = lam_sq, 
                                       i = i):
-                # print("w: ", self.alpha)
+                # print(f"Converge for alpha (iter. {i + 1})")
                 conv = True
                 f_curr = f_new
                 break
@@ -874,6 +875,18 @@ class KRGEE:
         return self.Obj(y, f_curr, p = p)
 
     # region: alternating optimization
+    def step_fullK_opt(self, y, K_x, K_x_uc, vcv):
+
+        if self.use_quasi_newton:
+            self.opt_weights_QN(self.K_train, y, Kx = None)
+            self.opt_rij_QN(y, T = vcv, Kx = K_x, uc = self.psc)
+            
+        else:
+            self.opt_weights(self.K_train, y, Kx = None)
+            self.opt_rij_gd_fullK(y, T = vcv, Kx = K_x, uc = self.psc)
+
+        self.update_K_train(u_new = self.psc, T = vcv, K_x_uc = K_x_uc)
+
     def fullK_opt(self, y, X, vcv):
         self.Rnn = R_u(vcv, self.psc, center = False)
 
@@ -894,7 +907,8 @@ class KRGEE:
         self.update_K_train(u_new = self.psc, T = vcv, K_x_uc = K_x_uc)
 
         curr_score = self.get_new_score(None, y)
-        curr_vals = np.hstack((self.f_curr, self.psc))
+        curr_sig = self.psc
+        curr_Kw = self.f_curr.copy()
 
         self.warm_start = True
         conv = False
@@ -910,21 +924,29 @@ class KRGEE:
             self.update_K_train(u_new=self.psc, T=vcv, K_x_uc=K_x_uc)
 
             new_score = self.get_new_score(None, y)
-            new_vals = np.hstack((self.f_curr, self.psc))
 
-            lam_sq = 2*(curr_score - new_score)/max([abs(curr_score), abs(new_score),1]) # a la scipy.minimize tol
-            if self.check_convergence(new_vals, curr_vals, 
+            new_Kw = self.f_curr.copy()
+            new_sig = self.psc
+
+            lam_sq = 2*(curr_score - new_score)/max([abs(curr_score), abs(new_score), 1]) # a la scipy.minimize tol
+            if self.check_convergence(new_sig, curr_sig, 
                                       g_norm=self.grad_tol*2, 
                                       lam2=lam_sq, 
-                                      i = i + 1):
+                                      i = i) or\
+                self.check_convergence(new_Kw, curr_Kw, 
+                                      g_norm=self.grad_tol*2, 
+                                      lam2=lam_sq, 
+                                      i = i):
                 if self.verbose:
                     print(f"Converged at iteration {i + 1}, phylogenetic correlation parameter: {self.psc},\
-                           new score: {new_score}, old score: {curr_score}, alpha: {np.exp(-self.psc)}")
+                            new score: {new_score}, old score: {curr_score}, alpha: {np.exp(-self.psc)}")
                 # print("converged.")
                 # print()
                 conv = True
                 break
             curr_score = new_score
+            curr_sig = new_sig
+            curr_Kw = new_Kw
 
         if not conv:
             print(f"{RED}No convergence. phylogenetic correlation parameter: {self.psc}, new score: {new_score}, old score: {curr_score}, alpha: {np.exp(-self.psc)}{RESET}")
