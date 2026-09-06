@@ -64,6 +64,7 @@ class KRGEE:
         self.inv_calculated = False
         self.use_quasi_newton = False
         self.memory_qn = 10
+        self.do_corr = False # do correction or not
         
         self.Rnn = None
 
@@ -78,6 +79,7 @@ class KRGEE:
         
         self.gamma = 0.1
         self.c = 0.1
+        self.corr = 1 # correction for the conditional latent bias
 
         self.max_iter = max_iter
         self.tol = tol
@@ -897,16 +899,7 @@ class KRGEE:
 
         self.K_train = self.center_kernel(K_x_uc + self.Rnn, save_means = True)
 
-
-        if self.use_quasi_newton:
-            self.opt_weights_QN(self.K_train, y, Kx = None)
-            self.opt_rij_QN(y, T = vcv, Kx = K_x, uc = self.psc)
-            
-        else:
-            self.opt_weights(self.K_train, y, Kx = None)
-            self.opt_rij_gd_fullK(y, T = vcv, Kx = K_x, uc = self.psc)
-
-        self.update_K_train(u_new = self.psc, T = vcv, K_x_uc = K_x_uc)
+        self.step_fullK_opt(y, K_x, K_x_uc, vcv)
 
         curr_score = self.get_new_score(None, y)
         curr_sig = self.psc
@@ -916,14 +909,7 @@ class KRGEE:
         conv = False
         for i in range(self.max_iter):
 
-            if self.use_quasi_newton:
-                self.opt_weights_QN(self.K_train, y, Kx=None) # update weights
-                self.opt_rij_QN(y, T=vcv, Kx=K_x, uc=self.psc)
-            else:
-                self.opt_weights(self.K_train, y, Kx=None) # update weights
-                self.opt_rij_gd_fullK(y, T=vcv, Kx=K_x, uc=self.psc)
-
-            self.update_K_train(u_new=self.psc, T=vcv, K_x_uc=K_x_uc)
+            self.step_fullK_opt(y, K_x, K_x_uc, vcv)
 
             new_score = self.get_new_score(None, y)
 
@@ -1187,12 +1173,16 @@ class KRGEE:
 
                 K_test = self.get_K(X_test, self.X, R = Rzn, trainxtest = True)
                 b, alpha = self.alpha[0], self.alpha[1:]
-                f =  K_test @ alpha + b # until here is ussually the way                
+                f =  K_test @ alpha + b # until here is ussually the way
 
-                if self.inv_calculated:
-                    return self.conditional_latent(f, self.f_curr, self.y, Rzn)
-                else:
+                if not self.do_corr:
                     return f
+                else:
+                    eta_y = self.inv_af(self.y)
+                    bias = Rzn @ la.solve( self.Rnn, eta_y - self.f_curr )
+                    b = self.corr
+                    # print("corr: ",b)
+                    return f + b*bias
 
             else:
                 if self.process == 'OU':
@@ -1201,7 +1191,7 @@ class KRGEE:
                 K_test = self.get_K(X_test, self.X, R = None, trainxtest = True)
                 b, alpha = self.alpha[0], self.alpha[1:]
                 f =  K_test @ alpha + b
-                return self.conditional_latent(f, self.f_curr, self.y, Rzn)
+                return f + self.conditional_latent(self.f_curr, self.y, Rzn)
     
     def predict(self, X_test, R_12 = None):
         """
@@ -1219,10 +1209,16 @@ class KRGEE:
         """
         return self.f_predict(X_test, R_12)
 
-    def conditional_latent(self, f_z, f_n, y, R_12):
-        f_z += R_12 @ self.R_inv @ (y - f_n)
-        return f_z
+    def inv_af(self, y):
+        """
+        inverse of the activation function
+        """
+        return y
     
+    def conditional_latent(self, f_n, y, R_12, std = 1):
+        e = (self.inv_af(y) - f_n)/std
+        return R_12 @ self.R_inv @ e
+
     def score(self, X_test, y_test, metric='rmse', R_12 = None):
         """
         The parameters already account for error correlation
@@ -1324,18 +1320,19 @@ class Logistic(KRGEE):
         """
         Get the variance of the estimator mu
         """
+        
+        p1_out = self.mu(f_curr)
+        self.Du = p1_out * (1 - p1_out)
         return self.Du
-    
-    def conditional_latent(self, f_z, f_n, y, R_12):
+
+    def inv_af(self, y):
+        """
+        inverse of the activation function
+        """
         y_c = np.clip(y, self.hessian_tol, 1 - self.hessian_tol)
-        # y_c = np.clip(y, 1e-3, 1 - 1e-3)
-        sig_inv_y = np.log(y_c/(1 - y_c))
-        e = sig_inv_y - f_n
-        bias = R_12 @ self.R_inv @ e
-        # print(f"e: {e[:5]}")
-        # print(f"bias: {bias[:5]}")
-        f_z += bias
-        return f_z
+        # y_c = np.clip(y, np.min(y), np.max([1 - 1e-3, np.max(y)]))
+        return np.log(y_c/(1 - y_c))
+    
     
     def predict_proba(self, X_test, R_12=None):
         f = self.f_predict(X_test, R_12)
