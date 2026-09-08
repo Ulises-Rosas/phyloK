@@ -65,7 +65,7 @@ class KRGEE:
         self.use_quasi_newton = False
         self.memory_qn = 10
         self.do_corr = False # do correction or not
-        self.do_mix_corr = False # do a convex combination between correction term and the prediction term
+        self.corr_type = 'convex'
         
         self.Rnn = None
 
@@ -1181,10 +1181,12 @@ class KRGEE:
                 else:
                     eta_y = self.inv_af(self.y)
                     bias = Rzn @ la.solve( self.Rnn, eta_y - self.f_curr )
-                    if self.do_mix_corr:
-                        b = self.corr
-                        # print("corr: ",b)
-                        return (1.0-b)*f + b*bias
+
+                    if self.corr_type == 'convex':
+                        return (1.0 - self.corr)*f + self.corr*bias
+                    
+                    elif self.corr_type == 'shrink':
+                        return f + self.corr*bias
 
                     else:
                         return f + bias
