@@ -65,6 +65,7 @@ class KRGEE:
         self.use_quasi_newton = False
         self.memory_qn = 10
         self.do_corr = False # do correction or not
+        self.do_mix_corr = False # do a convex combination between correction term and the prediction term
         
         self.Rnn = None
 
@@ -79,7 +80,7 @@ class KRGEE:
         
         self.gamma = 0.1
         self.c = 0.1
-        self.corr = 1 # correction for the conditional latent bias
+        self.corr = 0.5 # correction for the conditional latent bias
 
         self.max_iter = max_iter
         self.tol = tol
@@ -1180,9 +1181,13 @@ class KRGEE:
                 else:
                     eta_y = self.inv_af(self.y)
                     bias = Rzn @ la.solve( self.Rnn, eta_y - self.f_curr )
-                    b = self.corr
-                    # print("corr: ",b)
-                    return f + b*bias
+                    if self.do_mix_corr:
+                        b = self.corr
+                        # print("corr: ",b)
+                        return (1.0-b)*f + b*bias
+
+                    else:
+                        return f + bias
 
             else:
                 if self.process == 'OU':
@@ -1320,7 +1325,7 @@ class Logistic(KRGEE):
         """
         Get the variance of the estimator mu
         """
-        
+
         p1_out = self.mu(f_curr)
         self.Du = p1_out * (1 - p1_out)
         return self.Du
