@@ -66,6 +66,10 @@ class KRGEE:
         self.memory_qn = 10
         self.do_corr = False # do correction or not
         self.corr_type = 'convex'
+
+        # latent space bounds
+        self.lb = -np.inf
+        self.ub = np.inf
         
         self.Rnn = None
 
@@ -1179,8 +1183,13 @@ class KRGEE:
                 if not self.do_corr:
                     return f
                 else:
+                    # print("f_curr: ", self.f_curr[0:5])
+                    tmp_f = np.clip(self.f_curr, self.lb, self.ub)
+                    # print("tmp_f: ", tmp_f[0:5])
+
                     eta_y = self.inv_af(self.y)
-                    bias = Rzn @ la.solve( self.Rnn, eta_y - self.f_curr )
+                    # print("eta_y: ", eta_y[0:5])
+                    bias = Rzn @ la.solve( self.Rnn, eta_y - tmp_f )
 
                     if self.corr_type == 'convex':
                         return (1.0 - self.corr)*f + self.corr*bias
@@ -1298,6 +1307,9 @@ class Logistic(KRGEE):
         self.reg = 'logistic'
         
         self.grad_tol = 1e-10
+        # latent bounds
+        self.ub =  10.0
+        self.lb = -10.0
         self.hessian_tol = 1e-8
 
         self.Du_mu_func = self.get_Du_mu_internal
@@ -1306,8 +1318,9 @@ class Logistic(KRGEE):
 
     def mu(self, f):
 
-        f_tresh = 10
-        f = np.clip(f, -f_tresh, f_tresh)
+        # f_tresh = 10
+        # f_tresh = -np.log10(self.grad_tol)
+        f = np.clip(f, self.lb, self.ub)
         mu =  1/(1 + np.exp(-f))
         return mu
     
@@ -1320,7 +1333,6 @@ class Logistic(KRGEE):
 
         # p1 * p0, derivative of mu estimator
         self.Du = p1_out * (1 - p1_out)
-        self.Du = np.clip(self.Du, self.grad_tol, 1 - self.grad_tol)
         return self.Du, p1_out
     
     def get_Vu_func(self, f_curr):
@@ -1336,9 +1348,14 @@ class Logistic(KRGEE):
         """
         inverse of the activation function
         """
-        y_c = np.clip(y, self.hessian_tol, 1 - self.hessian_tol)
-        # y_c = np.clip(y, np.min(y), np.max([1 - 1e-3, np.max(y)]))
-        return np.log(y_c/(1 - y_c))
+        # y_c = np.clip(y, self.hessian_tol, 1 - self.hessian_tol)
+        # # y_c = np.clip(y, np.min(y), np.max([1 - 1e-3, np.max(y)]))
+        # return np.log(y_c/(1 - y_c))
+        y_c = np.zeros(len(y))
+        y_c[y == 0] = self.lb
+        y_c[y == 1] = self.ub
+        return y_c
+
     
     
     def predict_proba(self, X_test, R_12=None):
