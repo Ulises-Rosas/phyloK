@@ -65,7 +65,8 @@ class KRGEE:
         self.use_quasi_newton = False
         self.memory_qn = 10
         self.do_corr = False # do correction or not
-        self.corr_type = 'convex'
+        self.corr_type = 'shrink'
+        self.corr_scale_error = 'n'
 
         # latent space bounds
         self.lb = -np.inf
@@ -121,14 +122,7 @@ class KRGEE:
         self._verbose = False
         self.grad_tol = 1e-40
         self.hessian_tol = 1e-10
-        self.grad_clip = 2 # gradient clipping
 
-        self.grad_s = 0.0 # s for rmsprop
-        self.grad_dx = 0.0 # dx for rmsprop
-        self.grad_eps = 1e-8
-        # self.lr = 1 # learning rate
-        self.lr = 0.001 # learning rate
-        self.beta = 0.9 # beta for rmsprop
 
     def __repr__(self):
         return f"KRGEE(kernel={self.kernel}, max_iter={self.max_iter}, lam={self.lam}, warm_start={self.warm_start}, tol={self.tol})"
@@ -1158,7 +1152,35 @@ class KRGEE:
 
         return False
 
-    def f_predict(self, X_test, Rzn = None, std = True):
+    def correction_err_scale(self, e):
+
+        if self.corr_scale_error == 'std':
+            std = np.std(e)
+            if std > 0:
+                w = 1.0/std
+            else:
+                w = 1.0
+
+        elif self.corr_scale_error == 'neff':
+            n = len(e)
+            off_diag_mean = (np.sum(self.Rnn) - np.trace(self.Rnn))
+            if off_diag_mean > 0:
+                neff = n**2 / (n + off_diag_mean)
+            else:
+                neff = n
+
+            w = 1.0/neff
+
+        elif self.corr_scale_error == 'n':
+            w = 1.0/len(e)
+
+        else:
+            w = 1.0
+
+        # print("w: ", w)
+        return w
+
+    def f_predict(self, X_test, Rzn = None):
         assert len(self.alpha) > 0, "The model needs to be fitted first"
         assert X_test is not None, "X_test should not be None"
 
@@ -1190,9 +1212,7 @@ class KRGEE:
                     eta_y = self.inv_af(self.y)
                     # print("eta_y: ", eta_y[0:5])
                     e = eta_y - tmp_f
-
-                    if std:
-                        e /= np.std(e)
+                    e *= self.correction_err_scale(e)
 
                     # print("e: ", e[0:5])
                     bias = Rzn @ la.solve( self.Rnn, e )
