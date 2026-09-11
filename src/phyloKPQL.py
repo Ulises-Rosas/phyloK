@@ -1158,7 +1158,7 @@ class KRGEE:
 
         return False
 
-    def f_predict(self, X_test, Rzn = None):
+    def f_predict(self, X_test, Rzn = None, std = True):
         assert len(self.alpha) > 0, "The model needs to be fitted first"
         assert X_test is not None, "X_test should not be None"
 
@@ -1189,13 +1189,20 @@ class KRGEE:
 
                     eta_y = self.inv_af(self.y)
                     # print("eta_y: ", eta_y[0:5])
-                    bias = Rzn @ la.solve( self.Rnn, eta_y - tmp_f )
+                    e = eta_y - tmp_f
+
+                    if std:
+                        e /= np.std(e)
+
+                    # print("e: ", e[0:5])
+                    bias = Rzn @ la.solve( self.Rnn, e )
 
                     if self.corr_type == 'convex':
                         return (1.0 - self.corr)*f + self.corr*bias
                     
                     elif self.corr_type == 'shrink':
-                        return f + self.corr*bias
+                        f_zn = f + self.corr*bias
+                        return f_zn
 
                     else:
                         return f + bias
