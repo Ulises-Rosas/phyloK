@@ -6,35 +6,10 @@ from phylokrr_dev.opt import (newton_raphson_step, R_u,
                               backtracking_line_search_rij_gee)
 from phylokrr.kernels import linear_kernel
 from scipy.optimize import minimize
+from phylokrr_dev.agop import agop, RBF_kernel
 
 RED = "\033[31m"
 RESET = "\033[0m"
-
-def distance_matrix(a, b):
-    """
-    l2 norm squared matrix
-    """
-    return np.linalg.norm(a[:, None, :] - b[None, :, :], axis=-1)**2
-
-
-def RBF_kernel(a, b, gamma, extra_K = None):
-    """
-    Radial Basis Function
-    """ 
-    a = np.ascontiguousarray(a, dtype=np.float64)
-    b = np.ascontiguousarray(b, dtype=np.float64)
-    # data sim
-    tmp_rbf = -gamma * distance_matrix(a, b)
-
-    # if extra_K is not None:
-    #     tmp_rbf += extra_K
-
-    np.exp(tmp_rbf, tmp_rbf) # RBF kernel. Inplace exponentiation
-
-    if extra_K is not None:
-        tmp_rbf += extra_K
-
-    return tmp_rbf
 
 
 class KRGEE:
@@ -66,7 +41,11 @@ class KRGEE:
         self.memory_qn = 10
         self.do_corr = False # do correction or not
         self.corr_type = 'shrink'
-        self.corr_scale_error = 'n'
+        self.corr_scale_error = 'std'
+
+        self.do_agop = False # do average gradient outer product or not
+        self.agop_iter = 5
+        self.M = None
 
         # latent space bounds
         self.lb = -np.inf
@@ -206,7 +185,7 @@ class KRGEE:
         """
         if self.kernel == 'rbf':
 
-            K = RBF_kernel(A, B, self.gamma)
+            K = RBF_kernel(A, B, self.gamma, M = self.M)
 
         elif self.kernel == 'linear':
             K =  linear_kernel(A, B, self.c)
@@ -378,7 +357,7 @@ class KRGEE:
 
 
     def get_Du(self, f_curr):
-        """
+        r"""
         Get mu vector (estimator) and W matrix with mu derivatives 
         with respect to f(x).
 
@@ -467,7 +446,7 @@ class KRGEE:
         self.phi = np.dot(err, err)/self.dof # O(n)
     
     def get_V_Inv(self, f_curr):
-        """
+        r"""
         Get the square root of the inverse of the V matrix
         V = A^1/2 R A^1/2 \phi
         A = variance of \mu
@@ -1013,7 +992,7 @@ class KRGEE:
 
         self.psc = u_curr
 
-    def fit(self, X, y, vcv = None):
+    def fit0(self, X, y, vcv = None):
         """
         Fit the model
         """
@@ -1102,6 +1081,28 @@ class KRGEE:
             # self.set_R_inv(vcv) # it returns identity matrix if vcv is None
             # self.set_K_train(self.X)
             # self.opt_weights(self.K_train, y)
+    
+    # testing AGOP
+    def fit(self, X, y, vcv = None):
+
+
+        self.fit0(X, y, vcv)
+
+
+        if self.do_agop:
+            for _ in range(self.agop_iter):
+                y = self.y
+                W = self.alpha[1:]
+                lam = self.lam
+                X = self.X
+                K = self.K_train
+                M = self.M
+                gamma = self.gamma
+
+                M = agop(self, self.f_curr, self.y, W, lam, X, K, M, gamma)
+                self.M = M / (M.max() + 1e-30)
+                self.fit0(X, y, vcv)
+
 
 
     def check_convergence(self, f_new, f_curr, g_norm = 1, lam2 = 1, i = 1):
@@ -1163,9 +1164,9 @@ class KRGEE:
 
         elif self.corr_scale_error == 'neff':
             n = len(e)
-            off_diag_mean = (np.sum(self.Rnn) - np.trace(self.Rnn))
-            if off_diag_mean > 0:
-                neff = n**2 / (n + off_diag_mean)
+            off_diag_sum = (np.sum(self.Rnn) - np.trace(self.Rnn))
+            if off_diag_sum > 0:
+                neff = n**2 / (n + off_diag_sum)
             else:
                 neff = n
 
@@ -1173,6 +1174,21 @@ class KRGEE:
 
         elif self.corr_scale_error == 'n':
             w = 1.0/len(e)
+
+        elif self.corr_scale_error == 'std_neff':
+            n = len(e)
+            off_diag_sum = (np.sum(self.Rnn) - np.trace(self.Rnn))
+            if off_diag_sum > 0:
+                neff = n**2 / (n + off_diag_sum)
+            else:
+                neff = n
+
+            # neff = 2 if neff == 0 else 1
+            if neff > 1:
+                w = 1/np.linalg.norm(e, ord = 2)**2/(neff - 1)
+            else:
+                w = 1/np.linalg.norm(e, ord = 2)**2
+
 
         else:
             w = 1.0
