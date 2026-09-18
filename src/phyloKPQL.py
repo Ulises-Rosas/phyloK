@@ -46,6 +46,7 @@ class KRGEE:
         self.do_agop = False # do average gradient outer product or not
         self.agop_iter = 5
         self.M = None
+        self.agop_diag = True
 
         # latent space bounds
         self.lb = -np.inf
@@ -54,7 +55,8 @@ class KRGEE:
         self.Rnn = None
 
         self.alpha = np.array([])
-        self.psc = 0 # phylo signal constant
+        self.psc = 0.0 # phylo signal constant
+        self.init_u = -2.0
 
         self.verbose = verbose
         self.warm_start = warm_start
@@ -127,7 +129,8 @@ class KRGEE:
         if K is None:
             n = self.X.shape[0]
             return np.zeros((n,n))
-
+        
+        K = K.copy()
         K_row_mean = np.mean(K, axis = 1)
 
         if not (save_means or trainxtest):
@@ -621,6 +624,7 @@ class KRGEE:
                     fun=f, 
                     x0=uc, 
                     method='L-BFGS-B',
+                    # method='L-BFGS-B',
                     tol = self.tol,
                     options={ 'maxiter': self.max_iter, 'maxcor': self.memory_qn },
                     jac=nabla_f,
@@ -633,9 +637,7 @@ class KRGEE:
             print(f"{RED}No convergence after %i iterations {RESET}" % self.max_iter)
             print(f"curr. alpha: {np.exp(-self.psc)}")
 
-    def opt_weights_QN(self, K, y, Kx = None):
-
-        self.verbose = True
+    def opt_weights_QN(self, K, y):
 
         n = y.shape[0]
         p = K.shape[1] if K is not None else 0
@@ -645,8 +647,7 @@ class KRGEE:
         
         if p > 0:
             K_0 = np.zeros((n + 1, p + 1), dtype=K_dtype)
-            K_x = K if Kx is None else Kx
-            K_0[1:, 1:] = K_x
+            K_0[1:, 1:] = K
             lK_0 = self.lam * K_0
 
         else:
@@ -699,17 +700,31 @@ class KRGEE:
                     method='L-BFGS-B',
                     # method='BFGS',
                     tol = self.tol,
-                    options={ 'maxiter': self.max_iter, 'maxcor': self.memory_qn },
+                    options={'maxiter': self.max_iter, 
+                             'maxcor': self.memory_qn,
+                               },
                     jac=nabla_f,
                 )
+
+        # O(n^2) complexity mostly due to nabla_f and f evaluations
+        # the optimization itself is O(n^2) 
+        # result = minimize(
+        #             fun=f, 
+        #             x0=self.alpha, 
+        #             # method='L-BFGS-B',
+        #             method='BFGS',
+        #             tol = self.tol,
+        #             options={ 'maxiter': self.max_iter },
+        #             jac=nabla_f,
+        #         )
         
-        conv = result.success
+        conv = result.nit <= self.max_iter and result.success
         self.alpha = result.x
         self.f_curr = K_a @ self.alpha
         self.y = y.copy()
 
         if not conv:
-            print(f"{RED}No convergence for weights after %i iterations {RESET}" % self.max_iter)
+            print(f"{RED}No convergence for weights after %i iterations {RESET}" % result.nit)
             print(f"{RED}gamma, phi, lam:, {self.gamma}, {self.phi}, {self.lam}{RESET}")
             print(f"{RED}first 4 weights: {self.alpha[:4]}{RESET}")
     # endregion
@@ -777,7 +792,7 @@ class KRGEE:
                 dist=self.reg, phi = self.phi, lam=self.lam
             )
             
-            # self.alpha += d
+            # self.alpha += -np.linalg.solve(H, G)  # Newton-Raphson update
     
             # new optimal function val
             f_new = K_a @ self.alpha
@@ -850,9 +865,9 @@ class KRGEE:
         f_curr = f_wa + self.alpha[0]
 
         if K_x is not None:
-            p = (self.lam/2) * (self.alpha[1:].T @ K_x @ self.alpha[1:])
+            p = (self.lam/2.) * (self.alpha[1:].T @ K_x @ self.alpha[1:])
         else:
-            p = (self.lam/2) * (self.alpha[1:].T @ f_wa)
+            p = (self.lam/2.) * (self.alpha[1:].T @ f_wa)
 
         return self.Obj(y, f_curr, p = p)
 
@@ -860,7 +875,7 @@ class KRGEE:
     def step_fullK_opt(self, y, K_x, K_x_uc, vcv):
 
         if self.use_quasi_newton:
-            self.opt_weights_QN(self.K_train, y, Kx = None)
+            self.opt_weights_QN(self.K_train, y)
             self.opt_rij_QN(y, T = vcv, Kx = K_x, uc = self.psc)
             
         else:
@@ -870,7 +885,7 @@ class KRGEE:
         self.update_K_train(u_new = self.psc, T = vcv, K_x_uc = K_x_uc)
 
     def fullK_opt(self, y, X, vcv):
-        self.Rnn = R_u(vcv, self.psc, center = False)
+
 
         K_x_uc = self.get_K(X, X, center = False)
         K_x = self.center_kernel(K_x_uc, save_means = False)
@@ -895,7 +910,6 @@ class KRGEE:
             new_sig = self.psc
 
             lam_sq = 2*abs(curr_score - new_score)/max([abs(curr_score), abs(new_score), 1]) # a la scipy.minimize tol
-            # lam_sq = 2*abs(curr_score - new_score)
             if self.check_convergence(new_sig, curr_sig, 
                                       g_norm=self.grad_tol*2, 
                                       lam2=lam_sq, 
@@ -996,7 +1010,7 @@ class KRGEE:
         """
         Fit the model
         """
-        self.psc = -2.0 # arbitrary initial value for the phylogenetic correlation parameter
+        self.psc = self.init_u # arbitrary initial value for the phylogenetic correlation parameter
         self.X = X # store the training data for prediction
 
         if self.add_extraK:
@@ -1014,7 +1028,7 @@ class KRGEE:
                 # uncentered
                 assert np.all(np.diag(vcv) == 0.0),\
                         "OU needs path length matrix as input"
-
+                self.Rnn = R_u(vcv, self.psc, center = False)
                 # self.decoupleR(y, X, vcv)
                 self.fullK_opt(y, X, vcv)
 
@@ -1072,15 +1086,17 @@ class KRGEE:
                     curr_score = new_score
 
                 if not conv:
-                    print(f"Didn't phylogenetic correlation parameter: {self.psc}, new score: {new_score}, old score: {curr_score}, alpha: {np.exp(-self.psc)}")
-                # self.psc = u_curr     
-            else:
+                    print(f"Didn't converge. Phylogenetic correlation parameter: {self.psc}, new score: {new_score}, old score: {curr_score}, alpha: {np.exp(-self.psc)}")
+                # self.psc = u_curr
 
+            elif self.process == 'none':
+                self.set_R_inv(None) # it returns identity matrix if vcv is None
+                self.set_K_train(self.X)
+                self.opt_weights(self.K_train, y)
+
+            else:
                 raise ValueError("Model missing")
 
-            # self.set_R_inv(vcv) # it returns identity matrix if vcv is None
-            # self.set_K_train(self.X)
-            # self.opt_weights(self.K_train, y)
     
     # testing AGOP
     def fit(self, X, y, vcv = None):
@@ -1099,8 +1115,9 @@ class KRGEE:
                 M = self.M
                 gamma = self.gamma
 
-                M = agop(self, self.f_curr, self.y, W, lam, X, K, M, gamma)
+                M = agop(self, self.f_curr, self.y, W, lam, X, K, M, gamma, diag = self.agop_diag)
                 self.M = M / (M.max() + 1e-30)
+                del M
                 self.fit0(X, y, vcv)
 
 
@@ -1250,7 +1267,11 @@ class KRGEE:
                 K_test = self.get_K(X_test, self.X, R = None, trainxtest = True)
                 b, alpha = self.alpha[0], self.alpha[1:]
                 f =  K_test @ alpha + b
-                return f + self.conditional_latent(self.f_curr, self.y, Rzn)
+                if not self.do_corr:
+                    return f
+                
+                else:
+                    return f + self.conditional_latent(self.f_curr, self.y, Rzn)
     
     def predict(self, X_test, R_12 = None):
         """
@@ -1330,15 +1351,15 @@ class Logistic(KRGEE):
     def __init__(self,
                  kernel='rbf',
                  max_iter=300, 
-                 lam=None,
+                 lam=0.1,
                  warm_start = False,
                  tol = 0.001,
                  verbose = False,
-                 get_corr = True,
+                 get_corr = False,
                  copy_R_inv = False,
                  copy_K_train = False,
                  fix_phi = False,
-                 add_extraK = False
+                 add_extraK = True
                  ) -> None:
         
         super().__init__(kernel = kernel, max_iter = max_iter,
@@ -1430,10 +1451,10 @@ class Logistic(KRGEE):
         """
         Get the quasi-likelihood function for the logistic model
         """
-        u = np.clip(u, eps, 1 - eps)
+        # u = np.clip(u, eps, 1 - eps)
         return (1/self.phi) * (y * np.log(u) + (1 - y) * np.log(1 - u))
     
-    def score(self, X_test, y_test, R_12 = None, metric = 'log_loss', eps = 1e-3):
+    def score(self, X_test, y_test, R_12 = None, metric = 'log_loss', eps = 1e-8):
         """
         Score the model using the specified metric.
         Parameters
@@ -1464,8 +1485,8 @@ class Logistic(KRGEE):
             # y_pred_prob = np.clip(y_pred_prob, eps, 1 - eps)
             # log_losses = -( y_test*np.log(y_pred_prob) + (1 - y_test)*np.log(1 - y_pred_prob) )
 
-            log_losses = - self.Q(y_test, y_pred_prob, eps=eps)
-            return np.mean( log_losses )
+            log_losses = self.Q(y_test, y_pred_prob, eps=eps)
+            return - np.mean( log_losses )
     
         else:
             raise ValueError("Invalid metric. Use 'loss' or 'log_loss'.")
