@@ -28,7 +28,9 @@ def simple_centerK(K):
 
     K_centered = K - K_col_mean - K_row_mean.reshape(-1, 1) + K_all_mean
     return K_centered
-    
+
+
+
 class PhyloKernel:
     """
     Phylogenetic kernel regression model with error correlation structure.
@@ -112,6 +114,7 @@ class PhyloKernel:
 
 
         self.f_curr = np.array([]) # current function values
+        self.obj_curr = np.inf # objective function value
 
         self._verbose = False
         self.grad_tol = 1e-40
@@ -373,13 +376,19 @@ class PhyloKernel:
             print(f"curr. alpha: {np.exp(-self.psc)}")
 
     def opt_weights_QN(self, K, y):
+        # K = self.K_train
+        nm = y.shape
+        if len(nm) == 1:
+            n = nm[0]
+            m = 1
+        else:
+            n, m = nm
 
-        n = y.shape[0]
         p = K.shape[1] if K is not None else 0
         K_dtype = K.dtype if K is not None else float
 
-        ones = np.ones(n, dtype=K_dtype)
-        
+
+        ones = np.ones(n, dtype=K_dtype)        
         if p > 0:
             K_0 = np.zeros((n + 1, p + 1), dtype=K_dtype)
             K_0[1:, 1:] = K
@@ -394,26 +403,38 @@ class PhyloKernel:
         K_a = np.ascontiguousarray(K_a, dtype=K_dtype)
 
         if not self.warm_start or np.any(np.isnan(self.alpha)):
-            self.alpha = np.zeros(p + 1) # alpha weights
+            self.alpha = np.zeros(m*(p + 1)) # alpha weights
             self.alpha = np.ascontiguousarray(self.alpha, dtype=K_dtype)
             self.phi = 1
 
         assert len(self.alpha) > 0, "The model needs to be fitted first"
 
         def nabla_f(w_a: np.ndarray) -> np.ndarray:
+            # w_a = self.alpha
+
+            w_a = w_a.reshape(p + 1, m, order='F')
+            y_b = y.reshape(n, m, order='F')
+            # print("w_a shape: ", w_a)
+
             f_curr = K_a @ w_a
             # get derivatives of \mu and \mu
             Du, u = self.get_Du(f_curr)
             V_Inv = self.get_V_Inv(f_curr) # O(n^2)
-    
-            DuDa = Du[:,None] * K_a # O(n^2)
-            # print("V_Inv shape: ", V_Inv.shape)
-            DuDaT_V = DuDa.T * V_Inv # O(n^2)
 
-            # gradient
-            g = (-1/n)*(DuDaT_V @ (y - u)) + lK_0 @ w_a # O(n^2)
-            return g
+            g = np.zeros((p + 1, m), dtype=K_dtype)
 
+            for k in range(m):
+                # k = 0
+                DuDa = Du[:,k][:,None] * K_a # O(n^2)
+                # print("V_Inv shape: ", V_Inv.shape)
+                DuDaT_V = DuDa.T * V_Inv[:,k] # O(n^2)
+
+                # gradient
+                g[:,k] = (-1/(n*m))*(DuDaT_V @ (y_b[:,k] - u[:,k])) + lK_0 @ w_a[:,k] # O(n^2)
+
+            return g.ravel(order = 'F')
+
+            
         def f(w_a: np.ndarray) -> float:
             f_curr = K_a @ w_a
             p = (self.lam/2.) * (w_a[1:].T @ K_a[:,1:] @ w_a[1:])
@@ -675,8 +696,9 @@ class PhyloKernel:
 
     # region: alternating optimization
     def step_fullK_opt(self, y, K_x, K_x_uc, vcv):
-
+        
         if self.use_quasi_newton:
+
             self.opt_weights_QN(self.K_train, y)
             self.opt_rij_QN(y, T = vcv, Kx = K_x, uc = self.psc)
             
@@ -712,7 +734,7 @@ class PhyloKernel:
             new_sig = self.psc
 
             lam_sq = 2*abs(curr_score - new_score)/max([abs(curr_score), abs(new_score), 1]) # a la scipy.minimize tol
-            if self.check_convergence(new_sig, curr_sig, 
+            if  self.check_convergence(new_sig, curr_sig, 
                                       g_norm=self.grad_tol*2, 
                                       lam2=lam_sq, 
                                       i = i ) and  \
@@ -723,17 +745,21 @@ class PhyloKernel:
                 if self.verbose:
                     print(f"Converged at iteration {i + 1}, phylogenetic correlation parameter: {self.psc},\
                             new score: {new_score}, old score: {curr_score}, alpha: {np.exp(-self.psc)}")
-                # print("converged.")
-                # print()
+                curr_score = new_score
+
                 conv = True
                 break
+
             curr_score = new_score
             curr_sig = new_sig
             curr_Kw = new_Kw
 
         if not conv:
-            print(f"{RED}No convergence. phylogenetic correlation parameter: {self.psc}, new score: {new_score}, old score: {curr_score}, alpha: {np.exp(-self.psc)}{RESET}")
+            print(f"{RED}No convergence at alternating optimization. Phylogenetic correlation parameter: {self.psc}, new score: {new_score}, old score: {curr_score}, alpha: {np.exp(-self.psc)}{RESET}")
+
+        self.obj_curr = curr_score
         self.warm_start = False
+
     # endregion: alternating optimization
 
     # region: fit
@@ -773,7 +799,9 @@ class PhyloKernel:
     def fit(self, X, y, vcv = None):
 
         self.fit0(X, y, vcv)
-        
+
+        best_M = None
+        best_score = np.inf
         if self.do_agop:
             for _ in range(self.agop_iter):
                 W = self.alpha[1:]
@@ -783,8 +811,17 @@ class PhyloKernel:
                          diag = self.agop_diag)
                 self.M = M / (M.max() + 1e-30)
                 del M
-                self.fit0(X, y, vcv)
 
+                self.fit0(X, y, vcv)
+                score = self.obj_curr
+
+                # print(f"AGOP iter: {_ + 1}, score: {score}, best_score: {best_score}")
+                if score < best_score:
+                    best_score = score
+                    best_M = self.M
+
+            self.M = best_M
+            self.fit0(X, y, vcv)
     # endregion: fit
 
 
@@ -903,16 +940,11 @@ class PhyloKernel:
             if not self.do_corr:
                 return f
             else:
-                # print("f_curr: ", self.f_curr[0:5])
                 tmp_f = np.clip(self.f_curr, self.lb, self.ub)
-                # print("tmp_f: ", tmp_f[0:5])
-
                 eta_y = self.inv_af(self.y)
-                # print("eta_y: ", eta_y[0:5])
                 e = eta_y - tmp_f
                 e *= self.correction_err_scale(e)
 
-                # print("e: ", e[0:5])
                 bias = Rzn @ la.solve( self.Rnn, e )
 
                 if self.corr_type == 'convex':
@@ -994,6 +1026,7 @@ class PhyloKernel:
 
             return 1 - (u / v)
 
+# region: Logistic regression
 
 class Logistic(PhyloKernel):
     """
@@ -1143,17 +1176,8 @@ class Logistic(PhyloKernel):
         else:
             raise ValueError("Invalid metric. Use 'loss' or 'log_loss'.")
 
-# eta = 1
 
-# from statsmodels.genmod import families
-# fam = families.Binomial()          # .Poisson(), .Gamma(), .Tweedie(), ...
-
-
-# mu  = fam.link.inverse(eta)        # 1/(1+exp(-eta))
-# v   = fam.variance(mu)             # mu*(1-mu)
-# d   = fam.link.inverse_deriv(eta)  # mu*(1-mu)
-# eta = fam.link(mu) 
-
+# region: Multinomial regression
 
 class Multinomial(PhyloKernel):
     """
@@ -1174,16 +1198,15 @@ class Multinomial(PhyloKernel):
                  copy_R_inv = False,
                  copy_K_train = False,
                  fix_phi = False,
-                 add_extraK = True
                  ) -> None:
         
         super().__init__(kernel = kernel, max_iter = max_iter,
                           lam = lam, warm_start = warm_start, 
                           tol = tol, verbose = verbose, get_corr=get_corr, 
-                          copy_R_inv=copy_R_inv,copy_K_train= copy_K_train, fix_phi=fix_phi,
-                          add_extraK=add_extraK)
+                          copy_R_inv=copy_R_inv,copy_K_train= copy_K_train, fix_phi=fix_phi)
 
         self.reg = 'multinomial'
+        self.use_quasi_newton = True
         
         self.grad_tol = 1e-10
         # latent bounds
