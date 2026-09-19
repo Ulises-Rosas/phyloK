@@ -2,9 +2,10 @@ import numpy as np
 from numpy import linalg as la
 
 from phylokrr_dev.opt import (newton_raphson_step, R_u, backtracking_line_search_rij)
-from phylokrr.kernels import linear_kernel
-from scipy.optimize import minimize
 from phylokrr_dev.agop import agop, RBF_kernel
+from phylokrr.kernels import linear_kernel
+
+from scipy.optimize import minimize
 
 RED = "\033[31m"
 RESET = "\033[0m"
@@ -414,7 +415,6 @@ class PhyloKernel:
 
             w_a = w_a.reshape(p + 1, m, order='F')
             y_b = y.reshape(n, m, order='F')
-            # print("w_a shape: ", w_a)
 
             f_curr = K_a @ w_a
             # get derivatives of \mu and \mu
@@ -786,7 +786,6 @@ class PhyloKernel:
             assert np.all(np.diag(vcv) == 0.0),\
                     "OU needs path length matrix as input"
 
-            self.Rnn = R_u(vcv, self.psc, center = False)
             self.fullK_opt(y, X, vcv)
 
         elif self.process == 'none':
@@ -815,10 +814,12 @@ class PhyloKernel:
                 self.fit0(X, y, vcv)
                 score = self.obj_curr
 
-                # print(f"AGOP iter: {_ + 1}, score: {score}, best_score: {best_score}")
                 if score < best_score:
                     best_score = score
                     best_M = self.M
+
+                # print(f"AGOP iter: {_ + 1}, score: {score}, best_score: {best_score}")
+
 
             self.M = best_M
             self.fit0(X, y, vcv)
@@ -1249,5 +1250,3 @@ class Multinomial(PhyloKernel):
         p1_out = self.mu(f_curr)
         self.Du = p1_out * (1 - p1_out)
         return self.Du
-
-
