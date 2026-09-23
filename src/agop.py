@@ -30,23 +30,25 @@ def nabla_kw(l, K, X, M, gamma, wj, diag = False):
             assert len(M.shape) == 1, "M should be a vector when diag is True"
             return -2 * gamma * M * Dl_kl_wj # O(p), R^{p,1}
 
-def agop(self, f_curr, y, W, lam, X, K, M, gamma, diag = False):
+def agop(Du, mu, Vu, y, W, lam, X, K, M, gamma, diag = False):
     """
     Outer product gradient for recursive feature machines
 
     Algorithm exact time complexity: 
-    Let m be the number of outputs, 
+    m be the number of outputs, 
     n be the number of samples, and 
     p be the number of features.
 
     If diag = False:
-    O(nmp^2 + pmn^2 + np^2) = O(mnp^2 + mpn^2).  Assuming p < n, then O(mpn^2).
+    O(nmp^2 + pmn^2 + np^2) = O(mnp^2 + mpn^2) = O(mnp(p + n)).  Assuming p < n, then O(mpn^2).
     
     
     If diag = True:
     O(nm + mpn^2 + np) = O(mpn^2) regardless of the relationship between p and n.
 
-    f_curr: current latent function values, shape (n, m)
+    Du: Derivative of the estimator, shape (n, m)
+    mu: Estimator, shape (n, m)
+    Vu: Variance of the estimator, shape (n, m)
     y: observed labels, shape (n, m)
     W: weights, shape (n, m)
     lam: regularization parameter
@@ -66,6 +68,9 @@ def agop(self, f_curr, y, W, lam, X, K, M, gamma, diag = False):
         Supplemntary material of the paper "Mechanism for feature learning in neural networks and backpropagation-free machine learning models"
     """
     # f_curr = lkrr.f_curr
+    # Du = lkrr.Du
+    # mu = self.mu(self.f_curr)
+    # Vu = lkrr.Vu
     # W = lkrr.alpha[1:]
     # lam = lkrr.lam
     # M = lkrr.M
@@ -75,22 +80,26 @@ def agop(self, f_curr, y, W, lam, X, K, M, gamma, diag = False):
     # self = lkrr
     # y = lkrr.y
     # diag = True
+    # y =  np.random.normal(size = (10,1))
 
     mn = y.shape
+    d1_array = False
     if len(mn) == 1:
         n,m = (mn[0], 1)
+        d1_array = True
 
     else:
         n,m = mn
 
-    Du, mu = self.get_Du_mu_internal(f_curr) # O(nm)
+    # Du, mu = self.get_Du_mu_internal(f_curr) # O(nm)
+    # Vu = self.get_Vu_func(f_curr) # O(nm)
+    # yb = y.reshape(n, m, order='F') # O(nm)
     e = y - mu # O(nm)
-    Vu = self.get_Vu_func(f_curr) # O(nm)
     e /= Vu
 
-    if m == 1:
-        e  = e[:, np.newaxis]
-        W  = W[:, np.newaxis]
+    if d1_array:
+        e  = e[ :, np.newaxis]
+        W  = W[ :, np.newaxis]
         Du = Du[:, np.newaxis]
 
     c1 = m*n
@@ -100,7 +109,7 @@ def agop(self, f_curr, y, W, lam, X, K, M, gamma, diag = False):
         nabla_f_l = np.zeros(X.shape[1])
         # O(p^2m + pnm) or O(pnm) if diag = True
         for j in range(m):
-            d = (-1/c1) * Du[l,j] * e[l,j] + (lam/2) * W[l,j]
+            d = (-1/c1) * Du[l,j] * e[l,j] + (lam/2.) * W[l,j]
             # O(p^2 + pn) or O(pn) if diag = True
             tmp = nabla_kw(l, K, X, M, gamma, W[:,j], diag=diag) * d
             # print("tmp: ",tmp)
