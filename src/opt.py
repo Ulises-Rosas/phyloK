@@ -98,6 +98,51 @@ def backtracking_line_search(y, w_a, K_a, Kx, d, g_d,
             break
     return t
 
+def backtracking_line_search_v2(y, w_a, K_a, Kx, d, g_d, 
+                                lam = 1, f = None):
+    """
+    Also known as the Armijo's rule: It makes to satisfy 
+    the first Wolfe condition. It is a sufficient decrease condition.
+    """
+
+    beta=1e-4
+    p=0.5
+    t = 10
+
+    f_w_a = K_a @ w_a
+    k_ad = K_a @ d
+
+    w   =  w_a[1:] # penalized weights 
+    d_w =  d[1:] # penalized weights direction
+
+    # l/2 * (w_a + t*d)^T K_0 (w_a + t*d)
+    #  = l/2 * (w + t*d_w)^T K_p (w + t*d_w)
+    #  = l/2 * (  t^2 * d_w.T K_p d_w + 2t w.T K_p d_w + w.T K_p w )
+    #  = l/2 * (  t^2 * c1            + 2t * c2        +    c3     )  
+    #  PEnalized term
+
+    c1 = d_w.T @ Kx @ d_w
+    c2 = w.T @ Kx @ d_w
+
+    # since w.T K_p w is present on both sides of the inequality, 
+    # it can be removed from the backtracking line search condition
+    # this makes two changes:
+    # 1. the PE term is now only the cross term and the quadratic term
+    # 2. the obj term is now only the Q term
+    
+    PE = lambda x: (c1*(x**2) + 2*c2*x)*(lam/2)
+    obj = f(y, f_w_a, 0)
+    # print("obj: ", obj)
+
+    f_w_td = lambda x: f_w_a + x*k_ad
+
+    while f(y, f_w_td(t), PE(t)) > obj + (t * beta * g_d):
+        t *= p
+        if t <= 1e-12:
+            t = 1e-12
+            break
+    return t
+
 
 
 def newton_raphson_step(y, H, G, K_a = None, Kx = None, w_a = None, 
@@ -117,6 +162,24 @@ def newton_raphson_step(y, H, G, K_a = None, Kx = None, w_a = None,
     
     step = backtracking_line_search(y, w_a, K_a, Kx, d, g_d, 
                                     lam=lam, dist=dist, phi=phi)
+    w_a += (step*d)
+
+    return -g_d
+
+def newton_raphson_step_v2(y, d, G, K_a = None, Kx = None, w_a = None, 
+                           f = None, lam = 1, 
+                        #    dist = 'logistic', phi = 1
+                           ):
+    
+    """
+    returns lam_sq to check later for convergence
+    """
+    g_d = G.T @ d
+    step = backtracking_line_search_v2(y, w_a, K_a, Kx, d, g_d, 
+                                       lam=lam, f = f)
+    
+    # step = backtracking_line_search(y, w_a, K_a, Kx, d, g_d, 
+    #                                 lam=lam, dist=dist, phi=phi)
     w_a += (step*d)
 
     return -g_d
@@ -317,46 +380,6 @@ def fibonacci_search(a, b, n, eps = 1e-3,
 
 
     return (a,b) if a < b else (b,a)
-
-
-# def mybrent(a, b, n, eps = 1e-3,
-#           T = None, Kx = None, w = None,
-#           y = None, lam_half = None, bias = None,
-#           dist = 'logistic', phi = 1):
-
-#     def f(uc):
-#         R = R_u(T, np.exp(-uc), center = False)
-#         f_w = (Kx + R) @ w
-#         p = lam_half * (w.T @ f_w)
-#         return Obj(y, f_w + bias, p, dist = dist, phi = phi)
-
-
-#     res = brent(f, brack=(a, b), tol=eps, maxiter = n)
-#     return res
-
-
-
-            # adaptive gradient
-            # self.grad_s += g**2
-            # u_new = u_curr - (self.lr/np.sqrt(self.grad_s + self.grad_eps)) * g
-
-            # RMSprop
-            # self.grad_s = self.beta*self.grad_s + (1 - self.beta)*g**2
-            # u_new = u_curr - (mylr/np.sqrt(self.grad_s + self.grad_eps)) * g
-
-            # adaptive delta
-            # u_new, rms_x, self.grad_s = adaptive_delta(u_curr, g, self.grad_s, rms_x, self.beta, self.grad_eps)
-
-            # ADAM optimizer
-            # u_new, v, s = adam(u_curr, i + 1, g, v, s, mylr)
-
-            # nesterov momentum
-            # nabla_f,_ = grad_wrt_u(u_curr - self.beta * v)
-            # u_new, v = nesterov_momentum(u_curr, v, nabla_f, self.beta, mylr)
-
-            # hypergradient nesterov momentum
-                # u_new, v, g_prev, mylr = hyper_nesterov_momentum(u_curr, v, g_prev, g, self.beta, mylr, mylrlr)
-
 
 
 
