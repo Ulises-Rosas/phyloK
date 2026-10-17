@@ -204,7 +204,7 @@ def dR_u(T, u, center = True):
 
 def backtracking_line_search_rij(y, w_a, u, T, Kx, d, g_d, 
                                  dist = 'logistic',
-                                 phi = 1, lam = 1,):
+                                 phi = 1, lam = 1,center = True):
     """
     Also known as the Armijo's rule: It makes to satisfy 
     the first Wolfe condition. It is a sufficient decrease condition.
@@ -224,7 +224,7 @@ def backtracking_line_search_rij(y, w_a, u, T, Kx, d, g_d,
     b = w_a[0] # intercept
 
     def f_u_td(u_td):
-        K_w_new = (Kx + R_u(T, u_td)) @ w
+        K_w_new = (Kx + R_u(T, u_td, center=center)) @ w
         return K_w_new + b, (lam/2)* (w.T @ K_w_new)
 
     obj = Obj(y, f_u_td(u), 0, dist=dist, phi=phi)
