@@ -11,11 +11,9 @@ def center_kernel(K):
     K_col_mean = np.mean(K, axis = 0)
     K_all_mean = np.mean(K)
 
-    K -= K_col_mean
-    K -= K_row_mean.reshape(-1,1)
-    K += K_all_mean
+    K_centered = K - K_col_mean - K_row_mean.reshape(-1, 1) + K_all_mean
 
-    return K
+    return K_centered
 
 
 
