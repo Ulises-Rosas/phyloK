@@ -194,8 +194,9 @@ def RBF_kernel(a, b, gamma, M = None, nan_adjust = False, k = 3, T = None, use_t
 
     else:
         D = distance_matrix(a, b, M=M)
-
-    # D = np.where(D < 0, 0, D) # numerical stability
+    # print("D.shape", D.shape)
+    # print("D", D)
+    D = np.where(D < 1e-10, 0.0, D) # numerical stability
     tmp_rbf = -gamma * D
 
     np.exp(tmp_rbf, tmp_rbf) # RBF kernel. Inplace exponentiation
