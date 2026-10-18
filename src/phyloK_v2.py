@@ -888,8 +888,8 @@ class PhyloKernel:
                         best_score = score
                         best_M = self.M                    
 
-                print(f"AGOP iter: {_ + 1}, score: {score}, best_score: {best_score}")
-                print(np.round(self.M,3))
+                # print(f"AGOP iter: {_ + 1}, score: {score}, best_score: {best_score}")
+                # print(np.round(self.M,3))
 
 
             self.M = best_M
