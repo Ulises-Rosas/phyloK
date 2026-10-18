@@ -594,7 +594,8 @@ class PhyloKernel:
                 print('phi: ', self.phi)
                 print('fix_phi: ', self.fix_phi)
                 print()
-        
+
+        self.obj_curr = self.get_new_score(None, y)
         self.f_curr = f_curr
         self.y = y.copy()
 
@@ -857,9 +858,9 @@ class PhyloKernel:
         if self.do_agop:
             best_M = None
             # best_score = self.score(X, y, vcv)
-            best_score = np.inf
+            best_score = self.obj_curr
             # print("score before agop: ", self.score(X, y, vcv))
-            print("score before agop: ", self.obj_curr)
+            # print("score before agop: ", self.obj_curr)
 
             for _ in range(self.agop_iter):
                 W = self.alpha[1:]
