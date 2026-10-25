@@ -122,7 +122,7 @@ def init_model(X_train, y_train, vcv_train, model,
     if verbose:
         print(f"Initial model fit time: {time_end - time_start:.2f} seconds")
 
-    # for the next iteration alpha is used
+    # for the next iteration weight is used (if not parallel)
     model.warm_start = False
 
     # for the next iteration R_inv is used
@@ -177,8 +177,11 @@ def k_fold_cv_weigthed(X, y, vcv, model, W,
                        verbose = True,
                        seed = 12038,
                        metric = 'log_loss',
-                       cores = 5):
+                       cores = 5,
+                       nodes = None,
+                       leaves = None,):
     """
+    Perform k-fold cross-validation with weighted sampling of training data.
     """
     
     model.verbose = False
@@ -214,8 +217,10 @@ def k_fold_cv_weigthed(X, y, vcv, model, W,
         vcv_test_12 = None
 
         if is_vcv:
-            vcv_train = vcv[train_idx,:][:,train_idx]
-            vcv_test_12 = vcv[test_idx,:][:,train_idx]
+            vcv_train   = vcv[np.ix_(train_idx,train_idx)]
+            vcv_test_12 = vcv[np.ix_(test_idx ,train_idx)]
+            if nodes is not None and leaves is not None:
+                model.set_training_tree(nodes, leaves[train_idx])
 
         elif not is_vcv and model.add_extraK:
             raise ValueError("Missing correlation structure at Cross validation")
