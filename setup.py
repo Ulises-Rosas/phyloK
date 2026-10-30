@@ -12,7 +12,7 @@ with open('README.md') as readme_file:
     readme = readme_file.read()
 
 setup(name = "phylokrr_dev",
-      version = '0.12.1',
+      version = '0.12.2',
     #   long_description = readme,
     #   long_description_content_type = 'text/markdown',
       packages = ['phylokrr_dev'],
