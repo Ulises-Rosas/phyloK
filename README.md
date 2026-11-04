@@ -1,5 +1,8 @@
-# KRGEE
-Kernel Ridge GEE
+# phyloK
 
+Installation:
 
-Development repo
+```bash
+pip install phylok
+```
+
