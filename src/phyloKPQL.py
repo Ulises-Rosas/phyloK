@@ -1,12 +1,12 @@
 import numpy as np
 from numpy import linalg as la
 
-from phylokrr_dev.opt import (newton_raphson_step, R_u, 
+from phyloK.opt import (newton_raphson_step, R_u, 
                               backtracking_line_search_rij,
                               backtracking_line_search_rij_gee)
 from phylokrr.kernels import linear_kernel
 from scipy.optimize import minimize
-from phylokrr_dev.agop import agop, RBF_kernel
+from phyloK.agop import agop, RBF_kernel
 
 RED = "\033[31m"
 RESET = "\033[0m"

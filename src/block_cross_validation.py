@@ -12,8 +12,8 @@ import multiprocessing as mp
 
 import numpy as np
 
-from phylokrr_dev.alpha_beta_weighting import weighted_sample
-from phylokrr_dev.utils import progressbar
+from phyloK.alpha_beta_weighting import weighted_sample
+from phyloK.utils import progressbar
 
 
 def sample_hyperParams(params, seed, sample, verbose):
