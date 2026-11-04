@@ -1,0 +1,13 @@
+.Rproj.user
+.Rhistory
+.RData
+.Ruserdata
+KRGEE.Rproj
+.vscode
+phylokrr_dev.egg-info
+old
+build
+dist
+analysis
+tmp_imgs
+
