@@ -2,11 +2,11 @@ import numpy as np
 from numpy import linalg as la
 
 from phyloK.opt import (newton_raphson_step_v2, backtracking_line_search_rij)
-from phyloK.agop import agop
+# from phyloK.agop import agop
 from phyloK.RBF import RBF_kernel
 from phylokrr.kernels import linear_kernel
 
-# from agop_dev import agop
+from agop_dev import agop
 from phyloK.tree_solve import solve_A_inv_b, get_tree_info, get_training_tree
 from phylokrr.treeio import is_leaf
 
@@ -944,7 +944,7 @@ class PhyloKernel:
                 if self.y.ndim == 1:
                     W = W[:, 0]
 
-                Du, _ = self.get_Du_mu_internal(self.f_curr) # O(nm)
+                Du, mu = self.get_Du_mu_internal(self.f_curr) # O(nm)
                 # Vu = self.get_Vu_func(self.f_curr) # O(nm)
 
                 # the derivative of k = k_x + r w.r.t. x only involves k_x (r does not depend on x):
@@ -952,11 +952,17 @@ class PhyloKernel:
                 K_x = getattr(self, 'K_x', None)
                 if K_x is None:
                     K_x = RBF_kernel(self.X, self.X, self.gamma, M = self.M)
+
+                W2  = W  if W.ndim  == 2 else W[:, None]
+                Du2 = Du if Du.ndim == 2 else Du[:, None]
+                mu2 = mu if mu.ndim == 2 else mu[:, None]
+
+                jac_w = lambda l: self.agop_jac_weights(W2, Du2, mu2, l)                    
                 # legacy code
                 # M = agop(Du, mu, Vu, self.y, W, self.lam,  
                 #          self.X, self.K_x, self.M, self.gamma,
                 #          diag = self.agop_diag)
-                M = agop(Du, None, None, self.y, W, self.lam,  
+                M = agop(None, None, None, self.y, jac_w, self.lam,  
                          self.X, K_x, self.M, self.gamma,
                          diag = self.agop_diag)                
                 del K_x
@@ -976,6 +982,10 @@ class PhyloKernel:
         self.K_x = None # only needed by AGOP; keeps the saved model small
     # endregion: fit
 
+    #region: agop
+    def agop_jac_weights(self, W, Du, mu, l):
+        return W * Du[l, :]
+    # endregion: agop
 
     def check_convergence(self, f_new, f_curr, g_norm = 1, lam2 = 1, i = 1):
         """
@@ -1271,6 +1281,7 @@ class Logistic(PhyloKernel):
 
         # f = np.clip(f, self.lb, self.ub)
         # return  1/(1 + np.exp(-f))
+        # expit = exp(f)/(1 + exp(f)) <=> 1/(1 + exp(-f))
         return expit(f)
     
     def get_Du_mu_internal(self, x):
@@ -1419,10 +1430,23 @@ class Multinomial(PhyloKernel):
         self.ub =  10.0
         self.lb = -10.0
         self.hessian_tol = 1e-8
+        self.agop_exact_softmax = True
 
         self.Du_mu_func = self.get_Du_mu_internal
         self.Vu_func = self.get_Vu_func
         self.Du = np.array([])
+
+    def agop_jac_weights(self,W, Du, mu, l):
+        """
+        Matrix that multiplies d k_{x,l:} / d x_l in the exact softmax Jacobian:
+            d mu_{l:} / d x_l = (d k_{x,l:} / d x_l) W [diag(mu_l) - mu_l^T mu_l]
+        W: (n, m) kernel weights, mu: (n, m) fitted means. O(nm^2) per observation.
+        """
+        if getattr(self, 'agop_exact_softmax', True):
+            mu_l = mu[l, :]
+            return W * mu_l - np.outer(W @ mu_l, mu_l)
+        else:
+            return W * Du[l, :] 
 
     def mu(self, f):
         """

@@ -30,7 +30,7 @@ def nabla_kw(l, K, X, M, gamma, w, diag = False):
             # print("b ", b)
             return b
 
-def agop(Du, mu, Vu, y, W, lam, X, K, M, gamma, diag = False):
+def agop(Du, mu, Vu, y,  jac_w, lam, X, K, M, gamma, diag = False):
     """
     Outer product gradient for recursive feature machines
 
@@ -50,7 +50,11 @@ def agop(Du, mu, Vu, y, W, lam, X, K, M, gamma, diag = False):
     mu: Estimator, shape (n, m)
     Vu: Variance of the estimator, shape (n, m)
     y: observed labels, shape (n, m)
-    W: weights, shape (n, m)
+    jac_w: callable l -> (n, m) array that multiplies d k_{x,l:} / d x_l, i.e.
+          d mu_{l:} / d x_l = (d k_{x,l:} / d x_l) @ jac_w(l).
+          Default: W * Du[l, :], the class-wise derivative (logistic, identity,
+          or the diagonal approximation of the softmax Jacobian).
+          For the exact softmax Jacobian pass jac_w(l) = W @ (diag(mu_l) - mu_l^T mu_l).
     lam: regularization parameter
     X: input data, shape (n, p)
     K: kernel matrix, shape (n, n)
@@ -83,27 +87,21 @@ def agop(Du, mu, Vu, y, W, lam, X, K, M, gamma, diag = False):
     # diag = True
 
     mn = y.shape
-    d1_array = False
     if len(mn) == 1:
         n,m = (mn[0], 1)
-        d1_array = True
 
     else:
         n,m = mn
 
     p = X.shape[1]
 
-    if d1_array:
-        W  = W[ :, np.newaxis]
-        Du = Du[:, np.newaxis]
-
-
     G = np.zeros((p,m,n))
     # O( nmp(n + p) ) or O( n^2mp ) if diag
     for l in range(n):
         # l = 0
         # O( mp(n + p) ) or O( mnp ) if diag
-        G[:,:,l] = nabla_kw(l, K, X, M, gamma,  W * Du[l,:], diag=diag)
+        # Wl = W * Du[l,:] if jac_w is None else  # R^{n,m}
+        G[:,:,l] = nabla_kw(l, K, X, M, gamma,  jac_w(l), diag=diag)
 
 
     G -= G.mean(axis = 2, keepdims = True)
