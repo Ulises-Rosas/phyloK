@@ -11,3 +11,6 @@ dist
 analysis
 tmp_imgs
 
+.DS_Store
+__pycache__/
+*.egg-info/

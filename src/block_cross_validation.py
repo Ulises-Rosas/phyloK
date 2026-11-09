@@ -158,7 +158,7 @@ def error_fn(model,
     # from init_model
     model.fit(X_train, y_train, vcv_train)
 
-    if model.add_extraK and is_vcv:
+    if model.process != 'none' and is_vcv:
         tmp_err = model.score(X_test, y_test, vcv_test_12, metric =metric)*len(y_test)
 
     else:
@@ -222,7 +222,7 @@ def k_fold_cv_weigthed(X, y, vcv, model, W,
             if nodes is not None and leaves is not None:
                 model.set_training_tree(nodes, leaves[train_idx])
 
-        elif not is_vcv and model.add_extraK:
+        elif not is_vcv and model.process != 'none':
             raise ValueError("Missing correlation structure at Cross validation")
         
         else:
@@ -241,7 +241,7 @@ def k_fold_cv_weigthed(X, y, vcv, model, W,
         # init_err2 = model.score(X_test, y_test, None)*len(y_test)
         # init_err = max(init_err1, init_err2)
 
-        if model.add_extraK and is_vcv:
+        if model.process != 'none' and is_vcv:
             init_err = model.score(X_test, y_test, vcv_test_12, metric = metric)*len(y_test)
 
         else:
