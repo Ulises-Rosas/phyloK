@@ -20,11 +20,11 @@ Models:
 pip install phylok
 ```
 
-or, from this folder, `pip install .`. Dependencies: `numpy`, `scipy` and `phylokrr`. The example below also uses `scikit-learn`.
+or, from this folder, `pip install .`. Dependencies: `numpy`, `scipy`, `joblib`, and  `phylokrr`. The example below also uses `scikit-learn`.
 
 ## Example: the circle function
 
-[`examples/circle_final.py`](examples/circle_final.py) simulates a binary trait on the 500-taxon tree in `examples/test_tree_v5.txt` and fits the default ("final") phyloK model. The model uses the OU tree-biased kernel, the correction during cross-validation, residual scaling, and diagonal AGOP. These are the defaults of `phyloKQL_fit_v2.py`.
+[`examples/circle_final.py`](examples/circle_final.py) test a binary trait on the 500-taxon tree in `examples/test_tree_v5.txt` and fits the default ("final") phyloK model. The model uses the OU tree-biased kernel, the correction during cross-validation, residual scaling, and diagonal AGOP..
 
 ```bash
 cd examples
@@ -63,7 +63,6 @@ from phyloK.block_cross_validation import k_fold_cv_weigthed
 from phyloK.phyloK_v2 import Logistic
 
 model = Logistic(tol=1e-6, max_iter=100, kernel='rbf', fix_phi=True, get_corr=False)
-model.add_extraK = True           # needed by k_fold_cv_weigthed: K = K_x + R
 model.process = 'OU'               # tree-biased kernel k = k_x + exp(-alpha t)
 model.do_corr = True               # correction during CV
 model.corr_type = 'shrink'
