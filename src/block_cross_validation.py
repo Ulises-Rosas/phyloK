@@ -1,14 +1,11 @@
 import os
-os.environ["OMP_NUM_THREADS"] = "1"
-os.environ["MKL_NUM_THREADS"] = "1"
-os.environ["OPENBLAS_NUM_THREADS"] = "1"
-os.environ["VECLIB_MAXIMUM_THREADS"] = "1"
-os.environ["NUMEXPR_NUM_THREADS"] = "1"
-
 import time
 from collections import deque
-import multiprocessing as mp
-# import multiprocessing.dummy as mp 
+
+# joblib (loky backend) instead of multiprocessing:
+#  - each worker limits its BLAS threads (about cores / n_jobs), which avoids
+#    oversubscription (n_jobs processes x all-core BLAS threads)
+from joblib import Parallel, delayed
 
 import numpy as np
 
@@ -264,26 +261,15 @@ def k_fold_cv_weigthed(X, y, vcv, model, W,
         # for errors in preout:
         #     all_errors.append(errors)
 
-        with mp.Pool( processes = cores ) as pool:
-            preout = []
-            for j, p_j in enumerate(P_r):
-
-                if j == init_idx:
-                    continue
-
-                tmp_param = dict(zip(P_n, p_j))
-                jerr = pool.apply_async(
-                    error_fn, 
-                    (model, 
-                    X_train, y_train, vcv_train,
-                    X_test, y_test, vcv_test_12,
-                    metric, tmp_param, verbose, i, j)
-                )
-                
-                preout.append(jerr)
-
-            for errors in preout:
-                all_errors.append(errors.get())
+        # one task per hyperparameter sample (results come back in order)
+        preout = Parallel(n_jobs = cores)(
+            delayed(error_fn)(model,
+                              X_train, y_train, vcv_train,
+                              X_test, y_test, vcv_test_12,
+                              metric, dict(zip(P_n, p_j)), verbose, i, j)
+            for j, p_j in enumerate(P_r) if j != init_idx
+        )
+        all_errors.extend(preout)
 
     # O(sample*folds)
     out = {}
@@ -307,9 +293,4 @@ def k_fold_cv_weigthed(X, y, vcv, model, W,
     model.copy_R_inv = False
     # let the model start with new alpha
     model.warm_start = False
-    # os.environ["OPENBLAS_NUM_THREADS"] = str(os.cpu_count())
-    # os.environ["OMP_NUM_THREADS"] = str(os.cpu_count())
-    # os.environ["MKL_NUM_THREADS"] = str(os.cpu_count())
-    # os.environ["VECLIB_MAXIMUM_THREADS"] = str(os.cpu_count())
-    # os.environ["NUMEXPR_NUM_THREADS"] = str(os.cpu_count())  
     return best_

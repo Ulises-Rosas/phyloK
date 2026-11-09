@@ -98,18 +98,18 @@ p = model.predict_proba(X_test, T_test_train)   # corrected with the training re
 
 ### Output
 
-The cross-validation took about 10 s on 2 cores.
+The cross-validation took about 10 s on 5 cores.
 
 ```
-500 taxa: 250 training, 250 test (class 1: 0.59 train, 0.55 test)
-CV (11 s), best hyperparameters: {'lam': 0.000509, 'gamma': 0.386, 'corr': 0.0228}
-fit (0.5 s): alpha = 3.69
+500 taxa: 250 training, 250 test (class 1: 0.62 train, 0.55 test)
+CV (6 s), best hyperparameters: {'lam': 0.000509, 'gamma': 0.386, 'corr': 0.0228}
+fit (0.8 s): alpha = 3.46
 AGOP: M = I kept (no AGOP iteration lowered the objective)
 
 Test ROC AUC
-  phyloK                 0.905
-  phyloK (uncorrected)   0.904
-  random forest          0.816
+  phyloK                 0.866
+  phyloK (uncorrected)   0.865
+  random forest          0.781
 ```
 
 Notes:

@@ -6,14 +6,15 @@ from distutils.core import setup
 dependencies = [
     "numpy",
     "scipy",
-    "phylokrr"
+    "phylokrr",
+    "joblib"
 ]
 
 with open('README.md') as readme_file:
     readme = readme_file.read()
 
 setup(name = "phyloK",
-      version = '1.1.0',
+      version = '1.1.1',
     #   long_description = readme,
     #   long_description_content_type = 'text/markdown',
       packages = ['phyloK'],
