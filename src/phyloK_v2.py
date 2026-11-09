@@ -6,7 +6,7 @@ from phyloK.opt import (newton_raphson_step_v2, backtracking_line_search_rij)
 from phyloK.RBF import RBF_kernel
 from phylokrr.kernels import linear_kernel
 
-from agop_dev import agop
+from phyloK.agop import agop
 from phyloK.tree_solve import solve_A_inv_b, get_tree_info, get_training_tree
 from phylokrr.treeio import is_leaf
 
