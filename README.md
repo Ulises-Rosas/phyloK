@@ -2,7 +2,7 @@
 
 Non-parametric phylogenetic regression with tree-biased kernels. phyloK kernelizes the penalized quasi-likelihood and adds the phylogeny to the kernel,
 
-$$k(\mathbf x_i, \mathbf x_j) = \exp\left(-\gamma(\mathbf x_i-\mathbf x_j)^\top\mathbf M(\mathbf x_i-\mathbf x_j)\right) + e^{-\alpha t_{ij}},$$
+$$k(\mathbf x_i, \mathbf x_j) = \exp\left(-\gamma(\mathbf x_i-\mathbf x_j)^\top\mathbf M(\mathbf x_i-\mathbf x_j)\right) + \exp\left( -\alpha t_{ij} \right) $$
 
 where $t_{ij}$ is the path length between taxa $i$ and $j$, $\alpha$ is learned, and $\mathbf M$ is learned with the average gradient outer product (AGOP). Predictions for new taxa can be corrected using their phylogenetic correlation with the training taxa.
 
