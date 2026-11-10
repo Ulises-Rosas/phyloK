@@ -14,7 +14,7 @@ with open('README.md') as readme_file:
     readme = readme_file.read()
 
 setup(name = "phyloK",
-      version = '1.1.1',
+      version = '1.2.0',
     #   long_description = readme,
     #   long_description_content_type = 'text/markdown',
       packages = ['phyloK'],
