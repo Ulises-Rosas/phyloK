@@ -72,13 +72,12 @@ if __name__ == "__main__":
 
     # --------------------------------------------------------- 4. the 'final' model
     model = Logistic(tol=1e-6, max_iter=100, kernel='rbf', verbose=False)
-    model.process = 'OU'               # tree-biased kernel k = k_x + exp(-alpha t)
-    model.use_quasi_newton = True      # L-BFGS-B
-    model.do_corr = True               # correction of Eq. 6 during CV
-    model.corr_type = 'shrink'
-    model.corr_scale_error = 'std'     # residuals scaled by their standard deviation
-    model.agop_iter = 5
-    model.agop_nogreedy = False        # keep a new M only if it lowers the objective
+    # model.process = 'OU'               # tree-biased kernel k = k_x + exp(-alpha t)
+    # model.use_quasi_newton = True      # L-BFGS-B
+    # model.do_corr = True               # correction of Eq. 6 during CV
+    # model.corr_scale_error = 'std'     # residuals scaled by their standard deviation
+    # model.agop_iter = 5
+    # model.agop_nogreedy = False        # keep a new M only if it lowers the objective
     model.memory_qn = len(train_idx)
 
     # hyperparameters: 100 log-uniform samples, five folds
