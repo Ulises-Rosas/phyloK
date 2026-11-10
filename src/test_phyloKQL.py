@@ -322,7 +322,6 @@ def main(data_model = 'spiral', seed = 12038,
                 lkrr = Logistic(tol=tol, 
                                 max_iter=max_iter, kernel='rbf', 
                                 verbose=not False,)  
-                lkrr.add_extraK = True # backward compatibility with previous versions of phyloKQL
                 lkrr.process = process
                 lkrr.use_quasi_newton = use_qn
                 lkrr.do_corr = do_corr

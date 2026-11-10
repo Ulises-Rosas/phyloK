@@ -64,13 +64,13 @@ class PhyloKernel:
 
         assert max_iter >= 1, "number of iterations should be a least 1" 
         self.reg = 'continous'
-        self.process = "BM"
+        self.process = "OU"
         self.inv_calculated = False
         self.use_quasi_newton = True
         self.use_bracketing = False # for phylo signal optimization
 
-        self.memory_qn = 10
-        self.do_corr = False # do correction or not
+        self.memory_qn = 20
+        self.do_corr = True # do correction or not
         self.corr_type = 'shrink'
         self.corr_scale_error = None # continuous: no scaling (conditional mean in y units); 'std' for Logistic/Multinomial
         self.training_tree = None # for fast tree-based solve of R^-1 b, if available

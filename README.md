@@ -60,12 +60,6 @@ from phyloK.block_cross_validation import k_fold_cv_weigthed
 from phyloK.phyloK_v2 import Logistic
 
 model = Logistic(tol=1e-6, max_iter=100, kernel='rbf', verbose=False)
-model.process = 'OU'               # tree-biased kernel k = k_x + exp(-alpha t)
-model.do_corr = True               # correction during CV
-model.corr_type = 'shrink'
-model.corr_scale_error = 'std'     # residuals scaled by their standard deviation
-model.agop_iter = 5
-model.agop_nogreedy = False        # keep a new M only if it lowers the objective
 model.memory_qn = len(y_train)
 
 # 100 log-uniform hyperparameter samples, five folds
