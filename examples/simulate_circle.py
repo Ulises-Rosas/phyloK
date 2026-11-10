@@ -38,8 +38,8 @@ e = rng.multivariate_normal(np.zeros(n), V, 1).ravel()
 f = 1.25 - np.sqrt(X[:, 0]**2 + 1.5 * X[:, 1]**2) + 0.1   # circle
 y = (1 / (1 + np.exp(-(f + e))) >= 0.5).astype(float)     # y = 1 if Logistic(f + e) >= 1/2
 
-# ---------------------------------- phylogeny-informed split (rho = 5)
-A = alpha_weighting(newick, alpha=5.0, tol=1e-15, branch_length=False)
+# ---------------------------------- phylogeny-informed split (rho = 2)
+A = alpha_weighting(newick, alpha=2.0, tol=1e-15, branch_length=False)
 P = np.array([A[name] for name in names])
 test_idx, train_idx = split_data_idx(int(0.5 * n), P, rng)
 
