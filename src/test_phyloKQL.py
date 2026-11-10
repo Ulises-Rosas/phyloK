@@ -319,10 +319,9 @@ def main(data_model = 'spiral', seed = 12038,
         for c1 in C1:
             for c2 in C2:
 
-                lkrr = Logistic(get_corr= False, tol=tol, 
+                lkrr = Logistic(tol=tol, 
                                 max_iter=max_iter, kernel='rbf', 
-                                verbose=not False, 
-                                fix_phi = fix_phi)  
+                                verbose=not False,)  
                 lkrr.add_extraK = True # backward compatibility with previous versions of phyloKQL
                 lkrr.process = process
                 lkrr.use_quasi_newton = use_qn

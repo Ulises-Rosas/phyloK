@@ -71,8 +71,7 @@ if __name__ == "__main__":
         f"(class 1: {y_train.mean():.2f} train, {y_test.mean():.2f} test)")
 
     # --------------------------------------------------------- 4. the 'final' model
-    model = Logistic(tol=1e-6, max_iter=100, kernel='rbf', verbose=False,
-                    fix_phi=True, get_corr=False)
+    model = Logistic(tol=1e-6, max_iter=100, kernel='rbf', verbose=False)
     model.process = 'OU'               # tree-biased kernel k = k_x + exp(-alpha t)
     model.use_quasi_newton = True      # L-BFGS-B
     model.do_corr = True               # correction of Eq. 6 during CV

@@ -58,10 +58,8 @@ class PhyloKernel:
                  warm_start = False,
                  tol = 0.001,
                  verbose = False,
-                 get_corr = True,
                  copy_R_inv = False,
                  copy_K_train = False,
-                 fix_phi = False,
                  ) -> None:
 
         assert max_iter >= 1, "number of iterations should be a least 1" 
@@ -108,10 +106,6 @@ class PhyloKernel:
         self.max_iter = max_iter
         self.tol = tol
 
-        # speicify if the correlation matrix is needed
-        # it might be the case that the input matrix is already
-        # in form of a correlation matrix
-        self.get_corr = get_corr 
 
         self.Du_mu_func = self.get_Du_mu_internal
         self.Vu_func = self.get_Vu_func
@@ -130,7 +124,6 @@ class PhyloKernel:
 
 
         self.phi = 1
-        self.fix_phi = fix_phi
         self.r = np.array([]) # residuals
         self.dof = 1 # degrees of freedom
         self.L_inv = np.array([]) # R^-1/2
@@ -627,7 +620,6 @@ class PhyloKernel:
             if self._verbose:
                 print("Iteration: ", i)
                 print('phi: ', self.phi)
-                print('fix_phi: ', self.fix_phi)
                 print()
 
         self.obj_curr = self.get_new_score(None, y)
@@ -1253,16 +1245,14 @@ class Logistic(PhyloKernel):
                  warm_start = False,
                  tol = 0.001,
                  verbose = False,
-                 get_corr = False,
                  copy_R_inv = False,
                  copy_K_train = False,
-                 fix_phi = False,
                  ) -> None:
         
         super().__init__(kernel = kernel, max_iter = max_iter,
                           lam = lam, warm_start = warm_start, 
-                          tol = tol, verbose = verbose, get_corr=get_corr, 
-                          copy_R_inv=copy_R_inv,copy_K_train= copy_K_train, fix_phi=fix_phi,)
+                          tol = tol, verbose = verbose,
+                          copy_R_inv=copy_R_inv,copy_K_train= copy_K_train)
 
         self.reg = 'logistic'
         self.corr_scale_error = 'std'
@@ -1414,13 +1404,12 @@ class Multinomial(PhyloKernel):
                  tol = 0.001,
                  verbose = False,
                  copy_K_train = False,
-                 fix_phi = False,
                  ) -> None:
         
         super().__init__(kernel = kernel, max_iter = max_iter,
                           lam = lam, warm_start = warm_start, 
                           tol = tol, verbose = verbose, 
-                          copy_K_train= copy_K_train, fix_phi=fix_phi)
+                          copy_K_train= copy_K_train)
 
         self.reg = 'multinomial'
         self.corr_scale_error = 'std'
