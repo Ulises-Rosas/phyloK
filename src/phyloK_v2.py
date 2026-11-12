@@ -569,13 +569,24 @@ class PhyloKernel:
         def get_grad_Hessian(f_curr, w_a):
             # get derivatives of \mu and \mu
             Du, u = self.get_Du(f_curr)
-            V_Inv = self.get_V_Inv(f_curr) # O(n^2)
-    
             DuDa = Du[:,None] * K_a # O(n^2)
 
             # V_inv is diagonal
             # DuDaT_V = DuDa.T * np.diag(V_Inv) # O(n^2)
-            DuDaT_V = DuDa.T * V_Inv # O(n^2)
+            with np.errstate(divide='ignore', invalid='ignore'):
+                V_Inv = self.get_V_Inv(f_curr) # O(n^2)
+                DuDaT_V = DuDa.T * V_Inv # O(n^2)
+
+            # saturated means (mu exactly 0 or 1, |f| > ~37 for the logit):
+            # V^-1 = inf and Du = 0 give 0 * inf = nan. Use the limit Du * V^-1
+            # (1/phi for canonical links) for those taxa only, so the other
+            # entries are computed exactly as before
+
+            # TODO: just use get_DuV_Inv() for canonical links (Logistic, Multinomial)
+            sat = ~np.isfinite(V_Inv)
+            if np.any(sat):
+                DuV_Inv = self.get_DuV_Inv(f_curr)
+                DuDaT_V[:, sat] = (DuV_Inv[sat][:, None] * K_a[sat, :]).T
 
             self.r = y - u # O(n)
 
@@ -869,13 +880,14 @@ class PhyloKernel:
 
     def _opt_weights_fixedK(self, y):
         """
-        Weights for a fixed kernel (BM / none). Newton for one output, as in
-        phyloK_dev2; quasi-Newton for multiclass (Newton is single-output).
+        Weights for a fixed kernel (BM / none). Quasi-Newton (L-BFGS-B) unless
+        use_quasi_newton is False, as in step_fullK_opt; multiclass always
+        uses quasi-Newton (Newton is single-output).
         """
-        if y.ndim == 1:
-            self.opt_weights(self.K_train, y)
-        else:
+        if self.use_quasi_newton or y.ndim > 1:
             self.opt_weights_QN(self.K_train, y)
+        else:
+            self.opt_weights(self.K_train, y)
             # self.obj_curr = self.get_new_score(None, y)
 
     def fit0(self, X, y, vcv = None):

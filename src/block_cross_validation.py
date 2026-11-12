@@ -283,7 +283,9 @@ def k_fold_cv_weigthed(X, y, vcv, model, W,
     # print("Time taken: ", time.time() - start)
     
     # O(sample * log sample)
-    best_pi,best_err = sorted(out.items(), key=lambda kv: kv[1], reverse=False)[0]
+    # a failed fit can give a nan error: never choose it (nan breaks sorting)
+    best_pi,best_err = sorted(out.items(),
+                              key=lambda kv: np.inf if np.isnan(kv[1]) else kv[1])[0]
     best_ = dict(zip(P_n, P_r[best_pi,:]))
 
     if verbose:
