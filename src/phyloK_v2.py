@@ -80,6 +80,7 @@ class PhyloKernel:
         self.M = None
         self.agop_diag = True
         self.agop_nogreedy = False
+        self.agop_exclude_identity = False
 
         # latent space bounds
         self.lb = -np.inf
@@ -569,24 +570,13 @@ class PhyloKernel:
         def get_grad_Hessian(f_curr, w_a):
             # get derivatives of \mu and \mu
             Du, u = self.get_Du(f_curr)
-            DuDa = Du[:,None] * K_a # O(n^2)
+            
+            DuV_Inv = self.get_DuV_Inv(f_curr)            # 1/phi for canonical links
+            DuDa = Du[:, None] * K_a      
 
             # V_inv is diagonal
             # DuDaT_V = DuDa.T * np.diag(V_Inv) # O(n^2)
-            with np.errstate(divide='ignore', invalid='ignore'):
-                V_Inv = self.get_V_Inv(f_curr) # O(n^2)
-                DuDaT_V = DuDa.T * V_Inv # O(n^2)
-
-            # saturated means (mu exactly 0 or 1, |f| > ~37 for the logit):
-            # V^-1 = inf and Du = 0 give 0 * inf = nan. Use the limit Du * V^-1
-            # (1/phi for canonical links) for those taxa only, so the other
-            # entries are computed exactly as before
-
-            # TODO: just use get_DuV_Inv() for canonical links (Logistic, Multinomial)
-            sat = ~np.isfinite(V_Inv)
-            if np.any(sat):
-                DuV_Inv = self.get_DuV_Inv(f_curr)
-                DuDaT_V[:, sat] = (DuV_Inv[sat][:, None] * K_a[sat, :]).T
+            DuDaT_V = K_a.T * DuV_Inv # O(n^2)
 
             self.r = y - u # O(n)
 
@@ -938,8 +928,8 @@ class PhyloKernel:
 
         if self.do_agop:
             assert self.kernel == 'rbf', "AGOP is implemented for the RBF kernel"
-            best_score = self.obj_curr
-            best = self._state()   # fit without AGOP (M = None)
+            best_score = np.inf if self.agop_exclude_identity else self.obj_curr 
+            best = None if self.agop_exclude_identity else self._state()   # fit without AGOP (M = None)
             n, m = self.get_dims(y)
 
             for _ in range(self.agop_iter):
@@ -981,7 +971,8 @@ class PhyloKernel:
                     best = self._state()
 
             # fit0 is deterministic: restore the best fit instead of refitting it
-            self._set_state(best)
+            if best is not None:
+                self._set_state(best)
 
         self.K_x = None # only needed by AGOP; keeps the saved model small
     # endregion: fit

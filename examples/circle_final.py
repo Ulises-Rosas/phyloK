@@ -74,8 +74,9 @@ if __name__ == "__main__":
     model = Logistic(tol=1e-6, max_iter=100, kernel='rbf', verbose=False)
     # model.process = 'OU'               # tree-biased kernel k = k_x + exp(-alpha t)
     # model.use_quasi_newton = True      # L-BFGS-B
-    # model.do_corr = True               # correction of Eq. 6 during CV
-    # model.corr_scale_error = 'std'     # residuals scaled by their standard deviation
+    model.do_corr = False               # correction of Eq. 6 during CV
+    model.corr_scale_error = 'std'     # residuals scaled by their standard deviation
+    model.agop_exclude_identity = True  # keep M = I if no AGOP iteration lowers the objective
     # model.agop_iter = 5
     # model.agop_nogreedy = False        # keep a new M only if it lowers the objective
     model.memory_qn = len(train_idx)
@@ -84,7 +85,7 @@ if __name__ == "__main__":
     params = {
         'lam':   np.logspace(-12, 3, 100, base=2),
         'gamma': np.logspace(-15, 4, 100, base=2),
-        'corr':  np.logspace(-10, 0, 100, base=2),
+        # 'corr':  np.logspace(-10, 0, 100, base=2),
     }
     W_train = np.full(len(train_idx), 1 / len(train_idx))   # uniform fold sampling
     start = time.time()
