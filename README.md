@@ -93,13 +93,13 @@ The cross-validation took about 10 s on 5 cores.
 
 ```
 500 taxa: 250 training, 250 test (class 1: 0.62 train, 0.54 test)
-CV (6 s), best hyperparameters: {'lam': 0.000413, 'gamma': 3.7, 'corr': 0.705}
-fit (0.8 s): alpha = 2.74
-AGOP: M = I kept (no AGOP iteration lowered the objective)
+CV (6 s), best hyperparameters: {'lam': 0.000372, 'gamma': 1.67}
+fit (1.0 s): alpha = 3.02
+AGOP diagonal: [0.558 1.   ]
 
 Test ROC AUC
-  phyloK                 0.886
-  phyloK (uncorrected)   0.876
+  phyloK                 0.898
+  phyloK (uncorrected)   0.891
   random forest          0.776
 ```
 
