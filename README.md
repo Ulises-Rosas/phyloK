@@ -48,9 +48,12 @@ The correction needs $\mathbf R_{nn}^{-1}\mathbf e$. If the model is given the t
 from phyloK.tree_solve import get_training_tree, scale_edges
 
 nodes, _ = parseNewickTree(newick)
-scale_edges(nodes, 2.0 / np.max(D))  # branch lengths on the scale of T
-spps_train = np.array(names)[train_idx]                 # row order of X_train
-tree_train = get_training_tree(nodes, spps_train)  # pruned to the training taxa: (nodes, root)
+# branch lengths on the scale of T
+scale_edges(nodes, 2.0 / np.max(D)) 
+# row order of X_train
+spps_train = np.array(names)[train_idx] 
+# pruned to the training taxa: (nodes, root)
+tree_train = get_training_tree(nodes, spps_train) 
 ```
 
 ### Fitting
@@ -64,11 +67,13 @@ model.memory_qn = len(y_train)
 
 # 100 log-uniform hyperparameter samples, five folds
 params = {'lam':   np.logspace(-12, 3, 100, base=2),
-          'gamma': np.logspace(-15, 4, 100, base=2)
+          'gamma': np.logspace(-15, 4, 100, base=2)}
+
 W_train = np.full(len(y_train), 1 / len(y_train))
+# pruned training tree in each fold
 best = k_fold_cv_weigthed(X_train, y_train, T_train, model, W_train, params,
                           folds=5, sample=100, seed=12038, cores=5,
-                          nodes=tree_train[0], leaves=spps_train)  # pruned again in each fold
+                          nodes=tree_train[0], leaves=spps_train) 
 
 model.set_params(**best)
 model.set_training_tree(tree_train, spps_train)   # tree-based solve in the fit and the prediction
