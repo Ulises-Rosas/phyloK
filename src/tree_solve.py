@@ -5,23 +5,7 @@ from collections import defaultdict
 
 import numpy as np
 from phylokrr.treeio import is_leaf
-
-def get_postorder(root):
-
-    S = [root]
-    L = []
-    while S:
-        v = S.pop()
-        L.append(v)
-
-        if is_leaf(v):
-            continue
-
-        l,r = v.left, v.right
-        S.append(l)
-        S.append(r)
-
-    return L
+from phyloK.alpha_beta_weighting import tree_postorder
 
 
 def prune_tree(LP, root):
@@ -128,7 +112,7 @@ def get_training_tree(full_nodes, training_leaves):
                 if is_leaf(n) and (n.name not in training_leaves_set) ]
     
     new_root = prune_tree(T_nodes, new_root)
-    new_nodes = get_postorder(new_root)
+    new_nodes = tree_postorder(new_root)
 
     return (new_nodes, new_root)
 
@@ -156,7 +140,7 @@ def get_tree_info(new_root, new_nodes):
         a list of the indices of the leaf nodes.
     """
     
-    new_nodes = get_postorder(new_root)
+    new_nodes = tree_postorder(new_root)
     leaves = [n.index for n in new_nodes if is_leaf(n)]
     len(leaves)
 
@@ -345,6 +329,222 @@ def patristic_distances(children, parent, length, root, leaves):
     return t
 
 
+# import numpy as np
+
+# from phylokrr.treeio import parseNewickTree, is_leaf, get_adj, get_C, get_APSP
+# from phyloK.tree_solve import get_training_tree
+
+# def get_D_ordered(nodes, leaves):
+#     """
+#     get distance matrix ordered by leaves.
+#     Nodes are ontained from the tree parser parseNewickTree, and leaves are the leaf nodes in the order of X and y.
+
+
+#     Parameters
+#     ----------
+#     nodes : list
+#         list of nodes from the tree parser parseNewickTree
+#     leaves : list
+#         list of leaf nodes in the order of X and y
+
+
+#     Returns
+#     -------
+#     D : np.ndarray
+#         distance matrix ordered by leaves, D[i, j] = path length between leaves[i] and leaves[j]
+#     """
+#     adj = get_adj(nodes)
+#     C = get_C(nodes, adj)
+#     return get_APSP(leaves, adj, C) # path lengths between tips, O(n^2)
+
+
+# def scale_edges(nodes, multiplier):
+#     """
+#     Scale the branch lengths of the tree by a multiplier.
+
+#     Parameters
+#     ----------
+#     nodes : list
+#         list of nodes from the tree parser parseNewickTree
+#     multiplier : float
+#         multiplier to scale the branch lengths
+
+#     Returns
+#     -------
+#     None
+#         The function modifies the branch lengths of the nodes in place.
+#     """
+#     for node in nodes:
+#         node.branch_length *= multiplier
+
+
+
+
+# seed = 12038
+
+# # ------------------------------------------------------------------ 1. tree
+# with open("test_tree_v7.txt") as f:
+#     newick = f.readline().strip()
+
+# nodes, root = parseNewickTree(newick)
+# leaves = [n for n in nodes if is_leaf(n)]
+# n = len(leaves)
+# names = [n.name for n in leaves]                 # row order of X, y and T
+
+# # ------------------------------------- 2. circle data and phylogeny-informed split
+# D = get_D_ordered(nodes, leaves)
+# T = 2 * D / np.max(D)                             # rescaled path lengths: r_ij = exp(-alpha t_ij)
+
+
+# tree_nodes, root = parseNewickTree(newick)
+# height = np.max(D) / 2
+# scale_edges(tree_nodes, 1.0 / height)
+
+# train_idx = np.random.choice(n, size=int(0.5 * n), replace=False)
+# test_idx = np.setdiff1d(np.arange(n), train_idx)
+# spps_train = np.array(names)[train_idx]
+# n = len(spps_train)
+
+
+# tree_train = get_training_tree(tree_nodes, spps_train)   # (nodes, root)
+
+# spps_test = np.array(names)[test_idx]
+# training_leaves_set = set(spps_train)
+# name_of = {n.index: n.name for n in tree_nodes if is_leaf(n) and (n.name in training_leaves_set) }
+# # tree index -> name
+# row_of = {name: i for i, name in enumerate(spps_train)}
+
+# row_of_test = {name: i for i, name in enumerate(spps_test)}
+# name_of_test = {n.index: n.name for n in tree_nodes if is_leaf(n) and (n.name not in training_leaves_set) }
+# # name -> row index 
+# #then,  row_of[ name_of[ tree_index ] ] = tree index -> name -> row index.
+
+
+# # random vector
+# V = np.random.normal(size = (n, 3))
+
+# alpha = 1
+# # O(n^2 m) result
+# import timeit
+# Rzn = np.exp(- alpha * T_test_train)
+# timeit.timeit(stmt="res = Rzn @ V", globals=globals(), number=1000)
+
+# # from phyloK.alpha_beta_weighting import tree_postorder_g
+
+# def tree_postorder_g(root):
+
+#     S = [root]
+#     while S:
+#         v = S.pop()
+#         yield v
+
+#         if is_leaf(v):
+#             continue   
+
+#         l = v.left
+#         r = v.right
+#         S.append(l)
+#         S.append(r)
+
+# def pot():
+#     for v in tree_postorder_g(root):
+#         if is_leaf(v):
+#             if v.name in training_leaves_set:
+#                 v.R = V[row_of[v.name]]
+#             else:
+#                 v.R = np.zeros(V.shape[1])
+#             continue
+
+#         l, r  = v.left, v.right
+#         r_l = np.exp(-alpha * l.branch_length)
+#         r_r = np.exp(-alpha * r.branch_length)
+
+#         v.R = r_l * l.R + r_r * r.R
+
+#     # for n in tree_nodes:
+#     #     print(n.index, n.name, n.R)
+#     res2 = np.zeros((y_train.shape[0], V.shape[1]))        
+
+#     S = [root]
+#     while S:
+#         v = S.pop()
+#         if v == root:
+#             v.Rp = np.zeros(V.shape[1])
+#             S.append(v.left)
+#             S.append(v.right)
+#             continue
+        
+#         # parent
+#         p = v.ancestor
+#         # sister
+#         s = p.left if p.right == v else p.right
+
+#         # ou correlation for sister and parent
+#         # r_s = np.exp(-alpha * s.branch_length)
+#         r_v = np.exp(-alpha * v.branch_length)
+#         r_vs = np.exp(-alpha * (v.branch_length + s.branch_length))
+
+#         # v.Rp = r_v * ( r_s * s.R + p.Rp )
+#         v.Rp = r_vs * s.R  + r_v * p.Rp 
+        
+#         if is_leaf(v):
+#             #print(v.Rp)
+#             if v.name not in training_leaves_set:
+#                 res2[ row_of_test[ v.name ] ] = v.Rp
+#             continue
+
+#         S.append(v.left)
+#         S.append(v.right)
+
+# import treeswift as ts
+# tree = ts.read_tree_newick("test_tree_v5.txt")
+# tree.scale_edges(1.0 / height)
+# def pot2():
+
+#     for v in tree.traverse_postorder():
+#         if v.is_leaf():
+#             if v.label in training_leaves_set:
+#                 v.R = V[row_of[v.label]]
+#             else:
+#                 v.R = np.zeros(V.shape[1])
+#             continue
+
+#         l, r  = v.children
+#         r_l = np.exp(-alpha * l.edge_length)
+#         r_r = np.exp(-alpha * r.edge_length)
+
+#         v.R = r_l * l.R + r_r * r.R
+
+#     # for n in tree_nodes:
+#     #     print(n.index, n.name, n.R)
+
+#     res2 = np.zeros((y_train.shape[0], V.shape[1]))
+#     for v in tree.traverse_preorder():
+#         if v.is_root():
+#             v.Rp = np.zeros(V.shape[1])
+#             continue
+
+#         p = v.get_parent()
+#         # assuming binary tree
+#         s = p.children[0] if p.children[1] == v else p.children[1]
+
+#         # r_s = np.exp(-alpha * s.edge_length)
+#         r_v = np.exp(-alpha * v.edge_length)
+#         r_vs = np.exp(-alpha * (v.edge_length + s.edge_length))
+
+#         v.Rp = r_vs * s.R  + r_v * p.Rp 
+#         if v.is_leaf():
+#             if v.label in training_leaves_set:
+#                 continue
+
+#             res2[ row_of_test[ v.label ] ] = v.Rp
+            
+
+# # timeit.timeit(stmt=pot,globals=globals(), number=1000)
+# timeit.timeit(stmt=pot2,globals=globals(), number=1000)
+
+# # diff = np.abs(res - res2).max()
+#     # print(f"max difference between O(n^2 m) and O(n m) results: {diff:.3g}")
 if __name__ == "__main__":
     children, parent, length, root, leaves = random_tree(4, seed=1)
     alpha = 0.7

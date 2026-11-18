@@ -17,7 +17,21 @@ def split_leaves(sorted_leaves, folds):
 
     return myfolds
 
-def tree_postorder(root):
+def tree_postorder(root) -> list:
+    """
+    Return a list of nodes in postorder traversal of the tree rooted at root.
+
+    Parameters
+    ----------
+    root : Node
+        The root node of the tree.
+
+    Returns
+    -------
+    L : list
+        A list of nodes in postorder traversal.
+    
+    """
 
     L = []
     S = [root]
@@ -28,8 +42,7 @@ def tree_postorder(root):
         if is_leaf(v):
             continue   
 
-        l = v.left
-        r = v.right
+        l, r  = v.left, v.right
         S.append(l)
         S.append(r)
 

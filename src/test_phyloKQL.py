@@ -297,7 +297,6 @@ def main(data_model = 'spiral', seed = 12038,
     leafs_arr = np.array([n.name for n in leaves])
 
     
-    fix_phi = True
     cv_sample = 100 # number of hyperparameters to test
     cv_folds = 5
     max_iter = 100
@@ -414,18 +413,18 @@ def main(data_model = 'spiral', seed = 12038,
                 start = time.time()
                 # lkrr.tol = 1e-4
                 # lkrr.use_bracketing = True
-                # lkrr_best_params = k_fold_cv_weigthed(
-                #     X_train, y_train, vcv_train,
-                #     lkrr,  W[train_idx], params,
-                #     folds=cv_folds,
-                #     sample=cv_sample, 
-                #     verbose= verbose, 
-                #     seed=seed,
-                #     cores = cores,
-                #     nodes = tree_train[0],
-                #     leaves = spps_train
-                # )
-                lkrr_best_params = {'lam': np.float64(0.0004584623587215366), 'gamma': np.float64(0.258906851741006), 'corr': np.float64(0.049260178183150566)}
+                lkrr_best_params = k_fold_cv_weigthed(
+                    X_train, y_train, vcv_train,
+                    lkrr,  W[train_idx], params,
+                    folds=cv_folds,
+                    sample=cv_sample, 
+                    verbose= verbose, 
+                    seed=seed,
+                    cores = cores,
+                    nodes = tree_train[0],
+                    leaves = spps_train
+                )
+                # lkrr_best_params =  {'lam': np.float64(0.0004584623587215366), 'gamma': np.float64(0.258906851741006), 'corr': np.float64(0.049260178183150566)}
                 # lkrr_best_params =   {'lam': np.float64(0.02292311793607683), 'gamma': np.float64(0.06845563584015797), 'corr': np.float64(0.3752329919328113)}
                 if nested_loop_verbose:
                     print('lkrr (+ phylo K) CV Time: ', time.time() - start)
@@ -438,6 +437,7 @@ def main(data_model = 'spiral', seed = 12038,
 
                 lkrr.do_agop = do_agop # only applied when we know the hyperparameters.
                 lkrr.agop_diag = agop_diag 
+                lkrr.agop_exclude_identity = True
 
                 lkrr.set_training_tree(tree_train, leafs_arr[train_idx])
                 start = time.time()

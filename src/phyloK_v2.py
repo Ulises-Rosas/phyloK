@@ -80,7 +80,7 @@ class PhyloKernel:
         self.M = None
         self.agop_diag = True
         self.agop_nogreedy = False
-        self.agop_exclude_identity = False
+        self.agop_exclude_identity = True
 
         # latent space bounds
         self.lb = -np.inf
@@ -1065,7 +1065,10 @@ class PhyloKernel:
         new_nodes, new_root = self.training_tree
         children, parent, length, root, leaves = get_tree_info(new_root, new_nodes)
         name_of = {n.index: n.name for n in new_nodes if is_leaf(n)}
+        # tree index -> name
         row_of = {name: i for i, name in enumerate(self.training_names)}   # row order of X_train / e
+        # name -> row index 
+        #then,  row_of[ name_of[ tree_index ] ] = tree index -> name -> row index.
 
         alpha = np.exp(-self.psc)
         E2 = E[:, None] if E.ndim == 1 else E

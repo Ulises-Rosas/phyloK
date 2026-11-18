@@ -24,21 +24,60 @@ from phyloK.block_cross_validation import k_fold_cv_weigthed
 from phyloK.phyloK_v2 import Logistic
 from phyloK.tree_solve import get_training_tree
 
+def get_D_ordered(nodes, leaves):
+    """
+    get distance matrix ordered by leaves.
+    Nodes are ontained from the tree parser parseNewickTree, and leaves are the leaf nodes in the order of X and y.
+
+
+    Parameters
+    ----------
+    nodes : list
+        list of nodes from the tree parser parseNewickTree
+    leaves : list
+        list of leaf nodes in the order of X and y
+
+
+    Returns
+    -------
+    D : np.ndarray
+        distance matrix ordered by leaves, D[i, j] = path length between leaves[i] and leaves[j]
+    """
+    adj = get_adj(nodes)
+    C = get_C(nodes, adj)
+    return get_APSP(leaves, adj, C) # path lengths between tips, O(n^2)
+
+def scale_edges(nodes, multiplier):
+    """
+    Scale the branch lengths of the tree by a multiplier.
+
+    Parameters
+    ----------
+    nodes : list
+        list of nodes from the tree parser parseNewickTree
+    multiplier : float
+        multiplier to scale the branch lengths
+
+    Returns
+    -------
+    None
+        The function modifies the branch lengths of the nodes in place.
+    """
+    for node in nodes:
+        node.branch_length *= multiplier
+
 if __name__ == "__main__":
 
     seed = 12038
 
     # ------------------------------------------------------------------ 1. tree
-    with open("test_tree_v5.txt") as f:
+    with open("test_tree_v7.txt") as f:
         newick = f.readline().strip()
 
     nodes, root = parseNewickTree(newick)
     leaves = [n for n in nodes if is_leaf(n)]
-    names = [n.name for n in leaves]                 # row order of X, y and T
-    adj = get_adj(nodes)
-    C = get_C(nodes, adj)
-    D = get_APSP(leaves, adj, C)                      # path lengths between tips, O(n^2)
     n = len(leaves)
+    names = [n.name for n in leaves]                 # row order of X, y and T
 
     # ------------------------------------- 2. circle data and phylogeny-informed split
     # simulated by simulate_circle.py (predictors and errors under Brownian motion,
@@ -48,16 +87,16 @@ if __name__ == "__main__":
     X, y = data["X"], data["y"]
     train_idx, test_idx = data["train_idx"], data["test_idx"]
 
+    D = get_D_ordered(nodes, leaves)
     T = 2 * D / np.max(D)                             # rescaled path lengths: r_ij = exp(-alpha t_ij)
     T_train = T[np.ix_(train_idx, train_idx)]
     T_test_train = T[np.ix_(test_idx, train_idx)]
 
     # training tree: branch lengths on the scale of T (divided by the tree height,
     # max(D) / 2), pruned to the training taxa, in the row order of X_train
-    tree_nodes, _ = parseNewickTree(newick)
+    tree_nodes, root = parseNewickTree(newick)
     height = np.max(D) / 2
-    for node in tree_nodes:
-        node.branch_length /= height
+    scale_edges(tree_nodes, 1.0 / height)
     spps_train = np.array(names)[train_idx]
     tree_train = get_training_tree(tree_nodes, spps_train)   # (nodes, root)
 
