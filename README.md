@@ -45,13 +45,12 @@ In the example:
 The correction needs $\mathbf R_{nn}^{-1}\mathbf e$. If the model is given the training tree, this product is computed by recursions on the tree in $O(n)$, instead of a dense $O(n^3)$ solve. The branch lengths must be on the same scale as `T`, so they are divided by the tree height, `max(D) / 2`:
 
 ```python
-from phyloK.tree_solve import get_training_tree
+from phyloK.tree_solve import get_training_tree, scale_edges
 
-tree_nodes, _ = parseNewickTree(newick)
-for node in tree_nodes:
-    node.branch_length /= np.max(D) / 2
+nodes, _ = parseNewickTree(newick)
+scale_edges(nodes, 2.0 / np.max(D))  # branch lengths on the scale of T
 spps_train = np.array(names)[train_idx]                 # row order of X_train
-tree_train = get_training_tree(tree_nodes, spps_train)  # pruned to the training taxa: (nodes, root)
+tree_train = get_training_tree(nodes, spps_train)  # pruned to the training taxa: (nodes, root)
 ```
 
 ### Fitting
@@ -65,8 +64,7 @@ model.memory_qn = len(y_train)
 
 # 100 log-uniform hyperparameter samples, five folds
 params = {'lam':   np.logspace(-12, 3, 100, base=2),
-          'gamma': np.logspace(-15, 4, 100, base=2),
-          'corr':  np.logspace(-10, 0, 100, base=2)}
+          'gamma': np.logspace(-15, 4, 100, base=2)
 W_train = np.full(len(y_train), 1 / len(y_train))
 best = k_fold_cv_weigthed(X_train, y_train, T_train, model, W_train, params,
                           folds=5, sample=100, seed=12038, cores=5,

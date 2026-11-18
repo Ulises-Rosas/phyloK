@@ -17,6 +17,33 @@ def split_leaves(sorted_leaves, folds):
 
     return myfolds
 
+def tree_postorder_g(root):
+    """
+    Generator that yields nodes in postorder traversal of the tree rooted at root.
+
+    Parameters
+    ----------
+    root : Node
+        The root node of the tree.
+
+    Yields
+    ------
+    Node
+        The next node in postorder traversal.
+    """
+
+    S = [root]
+    while S:
+        v = S.pop()
+        yield v
+
+        if is_leaf(v):
+            continue   
+
+        l, r = v.left, v.right
+        S.append(l)
+        S.append(r)
+
 def tree_postorder(root) -> list:
     """
     Return a list of nodes in postorder traversal of the tree rooted at root.

@@ -6,6 +6,7 @@ from collections import defaultdict
 import numpy as np
 from phylokrr.treeio import is_leaf
 from phyloK.alpha_beta_weighting import tree_postorder
+from phylokrr.treeio import parseNewickTree, is_leaf, get_adj, get_C, get_APSP
 
 
 def prune_tree(LP, root):
@@ -329,60 +330,52 @@ def patristic_distances(children, parent, length, root, leaves):
     return t
 
 
-# import numpy as np
-
-# from phylokrr.treeio import parseNewickTree, is_leaf, get_adj, get_C, get_APSP
-# from phyloK.tree_solve import get_training_tree
-
-# def get_D_ordered(nodes, leaves):
-#     """
-#     get distance matrix ordered by leaves.
-#     Nodes are ontained from the tree parser parseNewickTree, and leaves are the leaf nodes in the order of X and y.
+def get_D_ordered(nodes, leaves):
+    """
+    get distance matrix ordered by leaves.
+    Nodes are ontained from the tree parser parseNewickTree, and leaves are the leaf nodes in the order of X and y.
 
 
-#     Parameters
-#     ----------
-#     nodes : list
-#         list of nodes from the tree parser parseNewickTree
-#     leaves : list
-#         list of leaf nodes in the order of X and y
+    Parameters
+    ----------
+    nodes : list
+        list of nodes from the tree parser parseNewickTree
+    leaves : list
+        list of leaf nodes in the order of X and y
 
 
-#     Returns
-#     -------
-#     D : np.ndarray
-#         distance matrix ordered by leaves, D[i, j] = path length between leaves[i] and leaves[j]
-#     """
-#     adj = get_adj(nodes)
-#     C = get_C(nodes, adj)
-#     return get_APSP(leaves, adj, C) # path lengths between tips, O(n^2)
+    Returns
+    -------
+    D : np.ndarray
+        distance matrix ordered by leaves, D[i, j] = path length between leaves[i] and leaves[j]
+    """
+    adj = get_adj(nodes)
+    C = get_C(nodes, adj)
+    return get_APSP(leaves, adj, C) # path lengths between tips, O(n^2)
 
 
-# def scale_edges(nodes, multiplier):
-#     """
-#     Scale the branch lengths of the tree by a multiplier.
+def scale_edges(nodes, multiplier):
+    """
+    Scale the branch lengths of the tree by a multiplier.
 
-#     Parameters
-#     ----------
-#     nodes : list
-#         list of nodes from the tree parser parseNewickTree
-#     multiplier : float
-#         multiplier to scale the branch lengths
+    Parameters
+    ----------
+    nodes : list
+        list of nodes from the tree parser parseNewickTree
+    multiplier : float
+        multiplier to scale the branch lengths
 
-#     Returns
-#     -------
-#     None
-#         The function modifies the branch lengths of the nodes in place.
-#     """
-#     for node in nodes:
-#         node.branch_length *= multiplier
-
-
+    Returns
+    -------
+    None
+        The function modifies the branch lengths of the nodes in place.
+    """
+    for node in nodes:
+        node.branch_length *= multiplier
 
 
-# seed = 12038
+# region: mat vec multiplication
 
-# # ------------------------------------------------------------------ 1. tree
 # with open("test_tree_v7.txt") as f:
 #     newick = f.readline().strip()
 
@@ -405,11 +398,12 @@ def patristic_distances(children, parent, length, root, leaves):
 # spps_train = np.array(names)[train_idx]
 # n = len(spps_train)
 
-
 # tree_train = get_training_tree(tree_nodes, spps_train)   # (nodes, root)
 
 # spps_test = np.array(names)[test_idx]
 # training_leaves_set = set(spps_train)
+# T_test_train = D[np.ix_(test_idx, train_idx)]
+
 # name_of = {n.index: n.name for n in tree_nodes if is_leaf(n) and (n.name in training_leaves_set) }
 # # tree index -> name
 # row_of = {name: i for i, name in enumerate(spps_train)}
@@ -431,20 +425,6 @@ def patristic_distances(children, parent, length, root, leaves):
 
 # # from phyloK.alpha_beta_weighting import tree_postorder_g
 
-# def tree_postorder_g(root):
-
-#     S = [root]
-#     while S:
-#         v = S.pop()
-#         yield v
-
-#         if is_leaf(v):
-#             continue   
-
-#         l = v.left
-#         r = v.right
-#         S.append(l)
-#         S.append(r)
 
 # def pot():
 #     for v in tree_postorder_g(root):
@@ -540,11 +520,15 @@ def patristic_distances(children, parent, length, root, leaves):
 #             res2[ row_of_test[ v.label ] ] = v.Rp
             
 
-# # timeit.timeit(stmt=pot,globals=globals(), number=1000)
+# timeit.timeit(stmt=pot,globals=globals(), number=1000)
 # timeit.timeit(stmt=pot2,globals=globals(), number=1000)
 
-# # diff = np.abs(res - res2).max()
-#     # print(f"max difference between O(n^2 m) and O(n m) results: {diff:.3g}")
+# diff = np.abs(res - res2).max()
+# print(f"max difference between O(n^2 m) and O(n m) results: {diff:.3g}")
+
+# endregion: mat vec multiplication
+
+
 if __name__ == "__main__":
     children, parent, length, root, leaves = random_tree(4, seed=1)
     alpha = 0.7
